@@ -72,7 +72,7 @@ So that cubin will now have our custom kernel code.  We can build the microbench
 
 To run this kernel in the debugger, you'll need to go to the Debug menu of Visual Studio and set a new breakpoint at a function name.  Put in the name of the kernel.  Then in the Nsight menu choose Start CUDA Debugging.  This should bring you to the start of the kernel SASS.  You don't need to have the debug configuration chosen for this to work.
 
-Ok, so that's it for the basics.  I'd move on to the [sgemm](wiki/sgemm) documentation as that walks you through a fairly complicated kernel using all the features of the assembler.  Then after reading the rest of the detailed documentation, I'd start playing with your old code that you're pretty familiar with.  Export the sass and get a feel for how ptxas structures your code and uses the control notation.  Also learn all the basic sass syntax.
+Ok, so that's it for the basics.  I'd move on to the [sgemm](https://github.com/NervanaSystems/maxas/wiki/SGEMM) documentation as that walks you through a fairly complicated kernel using all the features of the assembler.  Then after reading the rest of the detailed documentation, I'd start playing with your old code that you're pretty familiar with.  Export the sass and get a feel for how ptxas structures your code and uses the control notation.  Also learn all the basic sass syntax.
 
 If you run into any trouble, join the mailing list.  I plan to pretty aggressively support this project and want to make development as painless as possible.  I'm also keen on feature ideas you may have.  Good luck..
 
