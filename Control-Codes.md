@@ -33,7 +33,7 @@ XMAD R19.CC, R20.H1.reuse, R2.reuse, R5;
 XMAD.CLO R4, R20.reuse, R2.reuse, RZ;
 ```
 
-So these already have a manifestation in the sass (and I explain in more detail in the [sgemm](wiki/sgemm#Calculating_C:_Register_Banks_and_Reuse) document).  The control codes do not have any readable manifestation in the sass besides the hex value and are meant to be hidden from you.  So I split them out and output them in a format that you can see and manipulate.  So here is a sample of that format taken from the start of the sgemm code:
+So these already have a manifestation in the sass (and I explain in more detail in the [sgemm](sgemm#Calculating_C:_Register_Banks_and_Reuse) document).  The control codes do not have any readable manifestation in the sass besides the hex value and are meant to be hidden from you.  So I split them out and output them in a format that you can see and manipulate.  So here is a sample of that format taken from the start of the sgemm code:
 
 ```assembly_x86
 --:-:1:-:1      S2R tid, SR_TID.X;   // Set Dep 1
