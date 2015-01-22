@@ -279,3 +279,5 @@ LOOP:
 01:-:-:-:0      FFMA cx02y00, j0Ax02, j0By00, cx02y00; // Wait Dep 1
 --:-:-:-:1      LDS.U.128 j1Ax00, [readAs + 4x<1*128 + 00>];
 ```
+
+- Scott
