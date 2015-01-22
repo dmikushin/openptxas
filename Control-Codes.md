@@ -27,7 +27,7 @@ On the left we have the instruction address.  Each instruction is 8 bytes so you
 
 This shows the breakdown of how the control code is split into 3 sections, one for each of the associated instructions.  I also split this up further into control and reuse codes.  The reuse codes map to the reuse flags that you'll find in the sass like this:
 
-```
+```assembly
 XMAD R21, R17.H1, R2.reuse, R12;
 XMAD R19.CC, R20.H1.reuse, R2.reuse, R5;
 XMAD.CLO R4, R20.reuse, R2.reuse, RZ;
@@ -35,7 +35,7 @@ XMAD.CLO R4, R20.reuse, R2.reuse, RZ;
 
 So these already have a manifestation in the sass (and I explain in more detail in the [sgemm](sgemm#Calculating_C:_Register_Banks_and_Reuse) document).  The control codes do not have any readable manifestation in the sass besides the hex value and are meant to be hidden from you.  So I split them out and output them in a format that you can see and manipulate.  So here is a sample of that format taken from the start of the sgemm code:
 
-```assembly_x86
+```assembly
 --:-:1:-:1      S2R tid, SR_TID.X;   // Set Dep 1
 --:-:2:-:1      S2R bx,  SR_CTAID.X; // Set Dep 2
 --:-:3:-:1      S2R by,  SR_CTAID.Y; // Set Dep 3
