@@ -76,4 +76,4 @@ Ok, so that's it for the basics.  I'd move on to the [sgemm](https://github.com/
 
 If you run into any trouble, join the mailing list.  I plan to pretty aggressively support this project and want to make development as painless as possible.  I'm also keen on feature ideas you may have.  Good luck..
 
--Scott
+--Scott
