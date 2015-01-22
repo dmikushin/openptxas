@@ -2,7 +2,7 @@
 
 Starting with the Kepler architecture Nvidia has been moving some control logic off of the chip and into kernel instructions which are determined by the assembler.  This makes sense since it cuts down on die space and power usage, plus the assembler has access to the whole program and can make more globally optimal decisions about things like scheduling and other control aspects.   The op codes are already pretty densely packed so Nvidia added a new type of op which is a pure control code.  On Kepler there is 1 control instruction for every 7 operational instructions.  Maxwell added additional control capabilities and so has 1 control for every 3 instructions.  So here's some sample sass from cuobjdump:
 
-```assembly_x86
+```assembly
                                         /* 0x001f9400fe2007e6 */
   /*0008*/    MOV R1, c[0x0][0x20];     /* 0x4c98078000870001 */
   /*0010*/    MOV R0, c[0x0][0x150];    /* 0x4c98078005470000 */
@@ -170,7 +170,7 @@ S2R is a variable latency (about 20 clocks) load like instruction.  Here we use 
 
 Note the pipeline depth of ISETP is 13 clocks so we need to stall 13 prior to reading P0 in the SEL instruction (in addition to waiting on barriers 2 and 3).
 
-```assembly_x86
+```assembly
 --:-:1:-:1      S2R tid, SR_TID.X;   // Set Dep 1
 --:-:2:-:1      S2R bx,  SR_CTAID.X; // Set Dep 2
 --:-:3:-:1      S2R by,  SR_CTAID.Y; // Set Dep 3
@@ -184,7 +184,7 @@ Note the pipeline depth of ISETP is 13 clocks so we need to stall 13 prior to re
 
 Here we are dual issuing FFMA's with the shared load instructions.  We're also relying on the memory ops to be performed in source order so that they can share a barrier.  This seems to be pretty reliable for a reasonable number of memory ops.  Note the stall count of 2 on the final LDS since we're waiting on the set barrier in the following instruction.  We don't want to modify the LDS operands until the instruction signals to the barrier that it is done with the operand.  This takes about 20 clocks which is much less time than it takes to complete the load.  Finally we wait on barrier 1 before using the results of the LDS.
 
-```assembly_x86
+```assembly
 --:-:-:-:0      FFMA cx02y00, j0Ax02, j0By00, cx02y00;
 --:-:-:-:1      LDS.U.128 j1Ax00, [readAs + 4x<1*128 + 00>];
 --:-:-:-:1      FFMA cx02y01, j0Ax02, j0By01, cx02y01;
@@ -211,7 +211,7 @@ Here we load two textures setting two barriers.  But you can see just prior to a
 
 Note the IADDs can be dual issued with the STS instructions, as well as the BAR.SYNC.  Note the BAR.SYNC needs a 5 clock stall.  And note that in order to safely XOR writeS, we don't need to set a read barrier on the STS instructions.  This is because the BAR.SYNC ensures that all memory stores are complete before returning.  BAR.SYNC does _not_ guarantee that any memory loads are complete so you'll still have to use barriers for those.  It is legal to add wait flags to a BAR.SYNC (or any instruction for that matter I think).  And as I said, grouping barriers together can have some benefits.
 
-```
+```assembly
 --:-:-:-:2      XMAD.PSL.CBCC track0, ldx.H1, xmad_t0.H1, track0; // Stall 6 - 4 = 2
 --:-:1:-:1      TLD.B.LZ.P loadX0, track0, tex, 0x0, 1D, 0xf; // Set Dep 1
 --:-:2:-:1      TLD.B.LZ.P loadX4, track4, tex, 0x0, 1D, 0xf; // Set Dep 2
@@ -236,7 +236,7 @@ I think the problem here is that we are just overwhelming the memory unit with L
 
 So I think the lesson here is that for extremely memory op dense code, you can't rely on barriers to save you from hazards.  You'll need to make sure enough clocks transpire to dilute the density or you need to mix the loads with some stores which you can synchronize against.  And indeed inserting a bunch of NOPs with high stall counts does fix the problem as well.  This is probably not the kind of error you'd encounter in normal code, but only when trying to be overly clever with memory ops.  But at least you know this kind of reordering is possible.
 
-```
+```assembly
 <REGISTER_MAPPING>
 
     // Reuse a register from the second blocking registers
