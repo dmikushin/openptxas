@@ -25,19 +25,27 @@ Usage:
 
      maxas.pl --list|-l <cubin_file>
 
-  Test a cubin or sass file to to see if the assembler can reproduce all of the contained opcodes. Also useful for extending the missing grammar rules. Defaults to only showing failures without --all. With the --reg flag it will show register bank conflicts not hidden by reuse flags.
+  Test a cubin or sass file to to see if the assembler can reproduce all of the contained opcodes. 
+  Also useful for extending the missing grammar rules. 
+  Defaults to only showing failures without --all. 
+  With the --reg flag it will show register bank conflicts not hidden by reuse flags.
 
      maxas.pl --test|-t [--reg|-r] [--all|-a] <cubin_file | cuobjdump_sass_file>
 
-  Extract a single kernel into an asm file from a cubin. Works much like cuobjdump but outputs in a format that can be re-assembled back into the cubin.
+  Extract a single kernel into an asm file from a cubin. 
+  Works much like cuobjdump but outputs in a format that can be re-assembled back into the cubin.
 
      maxas.pl --extract|-e [--kernel|-k kernel_name] <cubin_file> [asm_file]
 
-  Preprocess the asm: expand CODE sections, perform scheduling. Mainly used for debugging purposes. Include the debug flag to print out detailed scheduler info.
+  Preprocess the asm: expand CODE sections, perform scheduling. Mainly used for debugging purposes. 
+  Include the debug flag to print out detailed scheduler info.
 
      maxas.pl --pre|-p [--debug|-d] <asm_file> [new_asm_file]
 
-  Insert the kernel asm back into the cubin.  Overwrite existing or create new cubin. Optionally you can skip register reuse flag auto insertion. This allows you to observe performance without any reuse or you can use it to set the flags manually in your sass.
+  Insert the kernel asm back into the cubin.  Overwrite existing or create new cubin. 
+  Optionally you can skip register reuse flag auto insertion. This allows you to 
+  observe performance without any reuse or you can use it to set the flags manually
+  in your sass.
 
      maxas.pl --insert|-i [--noreuse|-n] <asm_file> <cubin_file> [new_cubin_file]
 ```
