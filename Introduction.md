@@ -18,6 +18,6 @@ There are lots of other little features to talk about and you can explore them i
 
 The op code coverage is around 80% at this point. I can dis and re-assemble all of cublas_device.lib with zero errors. But there's still more to do: more op codes (mainly surface, texture and video instructions) and more micro benchmarks to fine tune the scheduler. Anyone interested in contributing would be welcome.
 
-Included is a sample sgemm implementation that runs at 98% of the theoretical throughput of Maxwell hardware, and as much as 4.8% faster than Nvidia's hand assembled cublas implementation. Also included is a simple framework to write microbenchmarks for the purpose of tuning the scheduler. Here is a simple page to get you started. There's more documentation and features to come...
+Included is a sample sgemm implementation that runs at 98% of the theoretical throughput of Maxwell hardware, and as much as 4.8% faster than Nvidia's hand assembled cublas implementation. Also included is a simple framework to write microbenchmarks for the purpose of tuning the scheduler. [Here](https://github.com/NervanaSystems/maxas/wiki/Getting-Started) is a simple page to get you started. There's more documentation and features to come...
 
 --Scott Gray
