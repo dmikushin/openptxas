@@ -1,5 +1,3 @@
-# MaxAs
-
 So I wrote a fairly full featured assembler for the Nvidia Maxwell architecture. This tool lets you code directly in the same "sass" language output by cuobjdump.
 
 This all started when I was studying different sgemm implementations and trying to incorporate those techniques into some deep learning code I've been working on. I basically came to the conclusion that it was not possible to fully utilize the hardware I bought with the tools Nvidia provides. Nvidia, unfortunately, doesn't believe in eating their own dog food and they hand assemble their library routines, rather than use ptxas like the rest of us have to. Ptxas badly manages register usage (especially when you're using vector memory ops), does a poor job of hiding memory latency with interleaved computation (particularly if you're trying to double buffer your memory loads) and handles certain predicated memory operations badly (even when warp uniform), among other things.
