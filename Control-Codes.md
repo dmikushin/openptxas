@@ -1,3 +1,5 @@
+### A detailed description of the control codes and maxas control notation
+
 # Introduction
 
 Starting with the Kepler architecture Nvidia has been moving some control logic off of the chip and into kernel instructions which are determined by the assembler.  This makes sense since it cuts down on die space and power usage, plus the assembler has access to the whole program and can make more globally optimal decisions about things like scheduling and other control aspects.   The op codes are already pretty densely packed so Nvidia added a new type of op which is a pure control code.  On Kepler there is 1 control instruction for every 7 operational instructions.  Maxwell added additional control capabilities and so has 1 control for every 3 instructions.  So here's some sample sass from cuobjdump:
