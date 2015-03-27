@@ -4,13 +4,23 @@ The first step is to download the maxas [source code](https://github.com/Nervana
 
 Next, you'll want to make sure you have Perl installed.  If on Windows I'd install the latest 64bit version from [Active State](http://www.activestate.com/activeperl/downloads).  If on Linux then you probably already have it installed, just make sure it's at least version 5.10 (the code makes heavy use of named regex capture groups introduced in 5.10).  It also requires 64bit as the op codes are that long and native support makes processing them much easier.
 
+If you have the [cpanm](http://search.cpan.org/~miyagawa/App-cpanminus-1.7027/lib/App/cpanminus.pm) module installed you can download and install maxas in one fell swoop via:
+```
+sudo cpanm git://github.com/NervanaSystems/maxas.git
+```
+Otherwise from the checked out source directory, issue:
+```
+perl MakeFile.PL
+make
+make test  # optional
+sudo make install
+```
+
 Next, you'll want to setup a text editor that supports custom syntax highlighting.  I'm not real crazy about Visual Studio as an editor for anything other than C++ or C#.  So I mainly use [TextPad](https://www.textpad.com/).  I've included a starter syntax file (sass.syn) for you to use.  I haven't yet populated it with every single permutation of instruction name, I've just been adding ones as I go.  You can probably convert that file to another editor's format if you were so inclined.
 
-Next is to setup your shell environment to easily work with the software.  If in windows I'd recommend, if you haven't already, to install a decent console application like [ConEmu](https://code.google.com/p/conemu-maximus5/).  Working directly in cmd.exe is pure masochism.  You'll want to setup your PATH and PERL5LIB environment variables to point to the directory with the source code.  I like to just edit my vcvarsall.bat script that I configure to start with every console invocation.  Here's what I have at the top:
+Next is to setup your shell environment to easily work with the software.  If in windows I'd recommend, if you haven't already, to install a decent console application like [ConEmu](https://code.google.com/p/conemu-maximus5/).  Working directly in cmd.exe is pure masochism.  I like to just edit my vcvarsall.bat script that I configure to start with every console invocation.  Here's what I have at the top:
 
 ```
-set PATH=C:\Users\Scott\Documents\MaxAs;%PATH%
-set PERL5LIB=C:\Users\Scott\Documents\MaxAs:%PERL5LIB%
 DOSKEY maxas=maxas.pl $* 
 DOSKEY ls=dir 
 DOSKEY rm=del $* 
