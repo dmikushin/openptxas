@@ -91,10 +91,10 @@ The main purpose of the stall count is to deal with pipeline latency and through
 So here the all the values that are legal for the stall count:
 
 ```
-    f : 13 clocks
-    e :  8 clocks, context switch?
-    d :  6 clocks, context switch?
-    c :  8 clocks, no yield (sometimes 16 clocks)
+    f : 15 clocks*
+    e : 14 clocks*
+    d : 13 clocks*
+    c : 12 clocks*
     b : 11 clocks
     a : 10 clocks
     9 :  9 clocks
@@ -107,13 +107,15 @@ So here the all the values that are legal for the stall count:
     2 :  2 clocks
     1 :  1 clocks  
     0 :  0 clocks, dual issue
+
+
 ```
 
-Some of these counts also carry additional meaning:
+Additional notes:
 
   * Stalling 0 means to dual issue that instruction with the following instruction.  This is only legal for instructions using two different chip resources (like a cuda core and a memory unit).
-  * The "c" value, in addition to stalling 8 clocks, prevents another other warp from filling the stall gap.   So it is like an SM wide stall.  With only one warp present per scheduler the stall count is 16 and not 8. This is probably a peculiarity of how it's implemented.  The rest of these stall counts all yield to other warps to come in and fill the gap left by the stall count.  I don't have a good example of where this yield blocking behavior would be useful, but I'm sure examples exist.
-  * There are duplicate stall counts for 6 and 8.  I'm not exactly sure how they differ but the larger values (d and e) seem to be used in cases of code where a lot of stalling is needed to satisfy dependencies.  So I'm thinking this may be a signal to the scheduler to try and find work elsewhere (like from another kernel).  These codes aren't needed at all to enforce the correctness of computation, they seem to be there for the purpose of scheduler optimization.  My sgemm code makes no use of them since it's mostly stall free.
+  * For stalls 12-15 the yield hint is required to be set in addition to the stall count.  Not setting this additional flag will give you fewer stall clocks.  I'm not sure what these stall counts are supposed to mean when this flag is not set.  But it seems to not be important.  
+  * The most useful of the higher stall counts is the 13 count which is how long you need to wait to immediately use a predicate that is set by any instruction.
 
 Some instructions with no pipeline require a minimum stall count to operate correctly.  Examples of this include BAR, BRA, CAL, RET, and EXIT which require a stall count of at least 5.
 
@@ -128,6 +130,8 @@ By using maxas SCHEDULE\_BLOCKs you can largely ignore setting stall counts as t
 The yield hint flag is a single bit.  Instead of a '1' I use a 'Y' to set this flag.  The scheduler for the most part manages your warp yields for you but there are times when giving it a hint to yield can speed things up.  In my sgemm implementations I add a yield flag in the middle of each block of 64 FFMAs.  This seems to balance the work better and not let any one warp run too far ahead and get stuck at a barrier so that it can no longer participate in TLP.  If you have code with high levels of ILP you might want to experiment with limited use of this flag to see if your performance is increased.
 
 Within a block or even across blocks of a kernel, yielding has no clock cost, provided work is ready to go in another warp.  There are some odd exceptions to this for highly dependent code where every instruction needs to be stalled the full pipeline depth of 6 (ILP=1).  This can give you the impression that yields do have a cost but this is not generally the case.  In these cases the cost is dependent on the number of active warps present so if you need to have code with ILP=1 you'll want to have 6 or more active warps per scheduler (to cover the stalls) and have any additional warps be a multiple of 3 (for some mysterious reason of the scheduler).
+
+The yield hint is also required in conjunction with the higher stall counts (12-15) as described above.
 
 ## Write Dependency Barriers
 
@@ -161,6 +165,10 @@ Here is how you wait on a previously set barrier of either type.  You can wait o
 So you can see for the first two barriers the wait mask and barrier number are the same.  This makes the code easier to read for these most frequently used barriers.  To wait on, say, both barriers 1 and 2 you'd use 03 as the mask.
 
 Waiting on a barrier that isn't set or is already signaled seems to not add any additional cost.
+
+# Predicated Execution and Dependency Barriers
+
+When you are mixing predicates and barrier flags the instructions behaves as if there was no predicate at all.  So you can not count on predicated sets or waits of the barriers.  If you need this kind of functionality the instructions need to be part of a branch.  If a predicate is warp uniform and used on a memory load, for example, then the wait time will be substantially less if there ends up being nothing to load.
 
 # Control Notation Examples
 
