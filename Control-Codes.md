@@ -116,14 +116,9 @@ Additional notes:
   * Stalling 0 means to dual issue that instruction with the following instruction.  This is only legal for instructions using two different chip resources (like a cuda core and a memory unit).
   * For stalls 12-15 the yield hint is required to be set in addition to the stall count.  Not setting this additional flag will give you fewer stall clocks.  I'm not sure what these stall counts are supposed to mean when this flag is not set.  But it seems to not be important.  
   * The most useful of the higher stall counts is the 13 count which is how long you need to wait to immediately use a predicate that is set by any instruction.
-
-Some instructions with no pipeline require a minimum stall count to operate correctly.  Examples of this include BAR, BRA, CAL, RET, and EXIT which require a stall count of at least 5.
-
-I haven't confirmed this for instructions besides ISETP and FSETP but I think any instruction that sets a predicate takes an additional 7 clocks on top of the usual 6 pipeline depth (so 13 clocks total).  Probably because predicates are likely stored at the level of the scheduler and take longer to propagate.
-
-Memory operations have delayed access to their operands so it's possible to update their operands just prior to executing them without needing to stall the full pipeline depth.  Global memory has a longer operand read latency at 4 clocks but shared is quicker at 2 clocks.
-
-By using maxas SCHEDULE\_BLOCKs you can largely ignore setting stall counts as this is handled for you, as well as optimally ordering instructions for the highest throughput.
+  * Some instructions with no pipeline require a minimum stall count to operate correctly.  Examples of this include BAR, BRA, CAL, RET, and EXIT which require a stall count of at least 5.
+  * Memory operations have delayed access to their operands so it's possible to update their operands just prior to executing them without needing to stall the full pipeline depth.  Global memory has a longer operand read latency at 4 clocks but shared is quicker at 2 clocks.
+  * By using maxas SCHEDULE\_BLOCKs you can largely ignore setting stall counts as this is handled for you, as well as optimally ordering instructions for the highest throughput.
 
 ## Yield Hint Flag
 
