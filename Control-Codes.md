@@ -161,7 +161,7 @@ So you can see for the first two barriers the wait mask and barrier number are t
 
 Waiting on a barrier that isn't set or is already signaled seems to not add any additional cost.
 
-# Predicated Execution and Dependency Barriers
+## Predicated Execution and Dependency Barriers
 
 When you are mixing predicates and barrier flags the instructions behaves as if there was no predicate at all.  So you can not count on predicated sets or waits of the barriers.  If you need this kind of functionality the instructions need to be part of a branch.  If a predicate is warp uniform and used on a memory load, for example, then the wait time will be substantially less if there ends up being nothing to load.
 
