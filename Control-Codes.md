@@ -171,13 +171,13 @@ S2R is a variable latency (about 20 clocks) load like instruction.  Here we use 
 
 **Update:** It is not wise to share a barrier between S2R instructions.  These can be processed out of order.  Use an explicit barrier for each.  This is also what ptxas does.
 
-Note the pipeline depth of ISETP is 13 clocks so we need to stall 13 prior to reading P0 in the SEL instruction (in addition to waiting on barriers 2 and 3).
+Note the pipeline depth of ISETP is 13 clocks so we need to stall 13 prior to reading P0 in the SEL instruction (in addition to waiting on barriers 2 and 3).  Also note that we're using the required yield flag to get the 13 count to work correctly.  Without this flag, the actual stall would be just 6 clocks and the results would be non-deterministic.
 
 ```assembly
 --:-:1:-:1      S2R tid, SR_TID.X;   // Set Dep 1
 --:-:2:-:1      S2R bx,  SR_CTAID.X; // Set Dep 2
 --:-:3:-:1      S2R by,  SR_CTAID.Y; // Set Dep 3
-01:-:-:-:f      ISETP.GE.AND P0, PT, tid, 128, PT; // Wait Dep 1   Stall 13
+01:-:-:Y:d      ISETP.GE.AND P0, PT, tid, 128, PT; // Wait Dep 1   Stall 13
 06:-:-:-:1      SEL blk, by, bx, P0;               // Wait Dep 2,3
 ```
 
@@ -238,6 +238,8 @@ Note that we have 20 LDS commands all sharing the same barrier here.  The error 
 I think the problem here is that we are just overwhelming the memory unit with LDS.128 ops and source ordering is no longer reliable.  We can try using additional barriers but we only have 6 and this is not enough to make the problem go away.  I tried a MEMBAR.CTA but this doesn't help either.  One way that I can get this code to work is by moving the C initialization further up and behind a couple STS instructions and a BAR.SYNC.  I believe that stores and loads are order preserving and so the bar.sync then effectively waits for the loads to complete as well.  The simpler way that fixes this issue is to just not share register 80 for the two variables.
 
 So I think the lesson here is that for extremely memory op dense code, you can't rely on barriers to save you from hazards.  You'll need to make sure enough clocks transpire to dilute the density or you need to mix the loads with some stores which you can synchronize against.  And indeed inserting a bunch of NOPs with high stall counts does fix the problem as well.  This is probably not the kind of error you'd encounter in normal code, but only when trying to be overly clever with memory ops.  But at least you know this kind of reordering is possible.
+
+**Update:**  This probably seems to have been corrected on GM204 and GM200 as I have not been able to duplicate it since.  The instruction queue depth for shared memory instructions appears to be very large on this hardware (like on the order of 50).  Global memory instructions have a much smaller queue (like on the order of 6) but execution is properly blocked when this queue fills up for a warp.  Warps seem to maintain their own queues and are not shared.
 
 ```assembly
 <REGISTER_MAPPING>
