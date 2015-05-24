@@ -239,7 +239,7 @@ I think the problem here is that we are just overwhelming the memory unit with L
 
 So I think the lesson here is that for extremely memory op dense code, you can't rely on barriers to save you from hazards.  You'll need to make sure enough clocks transpire to dilute the density or you need to mix the loads with some stores which you can synchronize against.  And indeed inserting a bunch of NOPs with high stall counts does fix the problem as well.  This is probably not the kind of error you'd encounter in normal code, but only when trying to be overly clever with memory ops.  But at least you know this kind of reordering is possible.
 
-**Update:**  This problem seems to have been corrected on GM204 and GM200 as I have not been able to duplicate it since.  The instruction queue depth for shared memory instructions appears to be very large on this hardware (like on the order of 50).  Global memory instructions have a much smaller queue (like on the order of 6) but execution is properly blocked when this queue fills up for a warp.  Warps seem to maintain their own queues and are not shared.
+**Update:**  This problem seems to have been corrected on GM204 and GM200 as I have not been able to duplicate it since.  The instruction queue depth for shared memory instructions appears to be very large on this hardware (like on the order of 50).  Global memory instructions have a much smaller queue (like on the order of 7-8) but execution is properly blocked when this queue fills up for a warp.  Warps seem to maintain their own queues and are not shared.
 
 ```assembly
 <REGISTER_MAPPING>
