@@ -2,6 +2,8 @@
 
 The first step is to download the maxas [source code](https://github.com/NervanaSystems/maxas).
 
+You can use any recent version of cuda for this, but the the nvdisasm binary must be from cuda 6.5.  I would install that and overwrite the version in cuda 7.x (after making a backup copy).  You can get cuda 6.5 here: nvdisasm from cuda 6.5: https://developer.nvidia.com/cuda-toolkit-archive
+
 Next, you'll want to make sure you have Perl installed.  If on Windows I'd install the latest 64bit version from [Active State](http://www.activestate.com/activeperl/downloads).  If on Linux then you probably already have it installed, just make sure it's at least version 5.10 (the code makes heavy use of named regex capture groups introduced in 5.10).  It also requires 64bit as the op codes are that long and native support makes processing them much easier.
 
 If you have the [cpanm](http://search.cpan.org/~miyagawa/App-cpanminus-1.7027/lib/App/cpanminus.pm) module installed you can download and install maxas in one fell swoop via:
@@ -66,7 +68,7 @@ Usage:
 So, we can't do much with the tool without some existing code to work with.  Let's experiment in the provided microbench directory.  There's already a basic kernel in microbench.cu we can build off of.  The Visual Studio project that's there is not configured to compile that file because I'm using the driver API and loading modules manually.  It is possible to use the cuda runtime with this tool.  See the comments at the bottom of microbench.cu for info on that.  Anyway, lets build the cubin to get started:
 
 ```
-> nvcc -arch sm_50 -m 32 -cubin microbench.cu
+> nvcc -arch sm_50 -cubin microbench.cu
 ```
 
 This produces microbench.cubin.  You should only need to compile the starter cubin once unless you end up changing kernel params or globals or shared memory.  We can now inspect the cubin with maxas:
