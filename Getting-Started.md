@@ -97,6 +97,6 @@ To run this kernel in the debugger, you'll need to go to the Debug menu of Visua
 
 Ok, so that's it for the basics.  I'd move on to the [sgemm](https://github.com/NervanaSystems/maxas/wiki/SGEMM) documentation as that walks you through a fairly complicated kernel using all the features of the assembler.  Then after reading the rest of the detailed documentation, I'd start playing with your old code that you're pretty familiar with.  Export the sass and get a feel for how ptxas structures your code and uses the control notation.  Also learn all the basic sass syntax.
 
-If you run into any trouble, join the mailing list.  I plan to pretty aggressively support this project and want to make development as painless as possible.  I'm also keen on feature ideas you may have.  Good luck..
+If you run into any trouble, join the [mailing list](https://groups.google.com/forum/#!forum/maxas-discuss).  I plan to pretty aggressively support this project and want to make development as painless as possible.  I'm also keen on feature ideas you may have.  Good luck..
 
 --Scott
