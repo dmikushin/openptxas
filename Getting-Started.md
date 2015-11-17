@@ -2,7 +2,7 @@
 
 The first step is to download the maxas [source code](https://github.com/NervanaSystems/maxas).
 
-You can use any recent version of cuda for this, but the the nvdisasm binary must be from cuda 6.5.  I would install that and overwrite the version in cuda 7.x (after making a backup copy).  You can get cuda 6.5 here: nvdisasm from cuda 6.5: https://developer.nvidia.com/cuda-toolkit-archive
+You can use any recent version of cuda for this, but the the nvdisasm binary must be from cuda 6.5.  I would install that and overwrite the version in cuda 7.x (after making a backup copy).  You can get cuda 6.5 here: https://developer.nvidia.com/cuda-toolkit-archive
 
 Next, you'll want to make sure you have Perl installed.  If on Windows I'd install the latest 64bit version from [Active State](http://www.activestate.com/activeperl/downloads).  If on Linux then you probably already have it installed, just make sure it's at least version 5.10 (the code makes heavy use of named regex capture groups introduced in 5.10).  It also requires 64bit as the op codes are that long and native support makes processing them much easier.
 
