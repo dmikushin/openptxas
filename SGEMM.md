@@ -30,7 +30,7 @@ So we now know what our total shared memory size needs to be: (8 lines per loop)
 
 Below is the basic memory layout shared by both implementations.  Note that I equate the X dimension with loads from A and aligned along lda while the Y dimension equates with loads from B and aligned along ldb.  These are the opposite of how x and y are typically spatially defined as drawn below.  Also note that the images for A and C are laid out as the transpose.  In retrospect I'd probably change this to have B as the transpose and swapped with A but this is how I originally worked it out.  In the next section I'll start discussing the 64 thread version in detail.
 
-![http://wiki.maxas.googlecode.com/hg/images/Layout.png](http://wiki.maxas.googlecode.com/hg/images/Layout.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/Layout.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/Layout.png)
 
 
 # SGEMM - 64 Thread Implementation
@@ -115,11 +115,11 @@ while (track0 < end)
 ```
 Loading A and B by quad vector texture index:
 
-![http://wiki.maxas.googlecode.com/hg/images/LoadGlobal64.png](http://wiki.maxas.googlecode.com/hg/images/LoadGlobal64.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/LoadGlobal64.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/LoadGlobal64.png)
 
 Storing A and B into the shared address space with quad vectors:
 
-![http://wiki.maxas.googlecode.com/hg/images/StoreShared64.png](http://wiki.maxas.googlecode.com/hg/images/StoreShared64.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreShared64.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreShared64.png)
 
 ### Reading from Shared
 
@@ -176,7 +176,7 @@ while (track0 < end)
 
 1D readAs (left) and readBs (top) combine in 2D to form the C result sub matrix for this thread block:
 
-![http://wiki.maxas.googlecode.com/hg/images/MatrixC64.png](http://wiki.maxas.googlecode.com/hg/images/MatrixC64.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/MatrixC64.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/MatrixC64.png)
 
 ### Calculating C: Register Banks and Reuse
 
@@ -192,7 +192,7 @@ So the first step we'll want to take is to minimize the number of bank conflicts
 
 If we arrange this in an 8 by 8 matrix as shown below, we can color each register with its bank index.  For the C registers we choose colors different from the corresponding blocking registers.  In this way you can see that we can eliminate all the bank conflicts with the C registers and the blocking registers.  This leaves the unavoidable 16 bank conflicts with the blocking registers themselves.  These are outlined in black:
 
-![http://wiki.maxas.googlecode.com/hg/images/RegisterBanks.png](http://wiki.maxas.googlecode.com/hg/images/RegisterBanks.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/RegisterBanks.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/RegisterBanks.png)
 
 Without the reuse cache, each of these 16 bank conflicts would cause a 1 clock stall in our computation.  This should slow our computation down by about 20% (128 clocks added to a 520 clock loop).  But if you assemble the sgemm code with the --noreuse flag you'll see performance only drops by a couple hundred Gflops or so.  This mystery is solved if you read through Nvidia's patent on [operand collectors](http://www.google.com/patents/US7834881) and particularly if you search for sections involving bank conflicts.  It describes a number of ways in which some bank conflicts can be mitigated.  It's hard to say how Maxwell is handling it but it probably involves being able to leverage TLP to hide the bank conflict latency.  So the operand collectors have some limited ability to mask bank conflicts on their own but they can probably be quickly overwhelmed.  By having a longer lasting cache instead of just temporary operand buffers the hardware is far more capable of averting bank conflict stalls.  It just needs the assembler to direct it with the reuse flags so it knows ahead of time what registers are worth caching and what to discard as registers are written to.
 
@@ -253,7 +253,7 @@ writeCs = (readBs / 4) * 64 + readAs;
 readCs = ((tid32 << 3) + tid31) << 2;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/WarpShuffle64.png](http://wiki.maxas.googlecode.com/hg/images/WarpShuffle64.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/WarpShuffle64.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/WarpShuffle64.png)
 
 ### Warp Shuffling and Coalesced Storing to Global
 
@@ -311,7 +311,7 @@ foreach copy vertical line of 8 registers from C into .v4.f32 cs0 and cs4
 ```
 In the diagram below, the blue squares represent how the green lines are constructed from the 8 states of the Cy00, Cy04, Cy08 and Cy12 matrix C offsets.  The portion of their vertical placement that isn't stride 32 is a mapping into the loop iteration and not a spatial position.
 
-![http://wiki.maxas.googlecode.com/hg/images/StoreGlobal64.png](http://wiki.maxas.googlecode.com/hg/images/StoreGlobal64.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreGlobal64.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreGlobal64.png)
 
 Whew... so that's it at a high level.  There are even lower level details covered in the code comments, particularly details on how to synchronize the memory accesses with computation.  The comments are only found in the [256 thread version](https://github.com/NervanaSystems/maxas/blob/master/sgemm/sgemm128.sass).  Speaking of which, below I show how having four times as many threads alters the mappings.
 
@@ -342,7 +342,7 @@ track4 = track0 + ldx*4;
 end = track0 + (k-8)*ldx;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/LoadGlobal128.png](http://wiki.maxas.googlecode.com/hg/images/LoadGlobal128.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/LoadGlobal128.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/LoadGlobal128.png)
 
 ### Storing to Shared
 
@@ -351,7 +351,7 @@ writeS  = tid31*4*4 + tid4*128*4;
 writeS += tid >= 128 ? 4096 : 0;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/StoreShared128.png](http://wiki.maxas.googlecode.com/hg/images/StoreShared128.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreShared128.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreShared128.png)
 
 ### Reading from Shared
 
@@ -360,7 +360,7 @@ readAs = ((tid128 >> 4) | ((tid >> 1) & 7)) << 4;
 readBs  = (((tid & 0x70) >> 3) | (tid & 1)) << 4 + 4096;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/MatrixC128.png](http://wiki.maxas.googlecode.com/hg/images/MatrixC128.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/MatrixC128.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/MatrixC128.png)
 
 ### Warp Synchronous Shuffle
 
@@ -373,7 +373,7 @@ writeCs = (readBs / 4) * 128 + readAs;
 readCs = ((tid96 << 4) | tid31 | (tid128 >> 2)) << 2;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/WarpShuffle128.png](http://wiki.maxas.googlecode.com/hg/images/WarpShuffle128.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/WarpShuffle128.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/WarpShuffle128.png)
 
 ### Storing to Global
 
@@ -389,7 +389,7 @@ Cy08 = Cy00 + ldc4*8;
 Cy12 = Cy00 + ldc4*12;
 ```
 
-![http://wiki.maxas.googlecode.com/hg/images/StoreGlobal128.png](http://wiki.maxas.googlecode.com/hg/images/StoreGlobal128.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreGlobal128.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/StoreGlobal128.png)
 
 
 
@@ -399,17 +399,17 @@ GPU specs: GM204 clocked at 1607 sustained.  I've eliminated the 1620 boost cloc
 
 Below we have the GFlops values for small matrices.  Here is where the 64 thread version shines.  It's able to break up the work into 4 times as many blocks as the 256 thread version and can balance the load better over 16 SMs.  At these sizes the L2 is more than able to cover for the increased bandwidth needs of this implementation.  Though it does run about 5-10% higher TDP.  Our implementations are also performing as much as 25% over cublas.  One interesting note about the cublas 128 version:  it is actually a hybrid between the 256 and 64 thread versions.  It loads matrix A at 128 units wide and matrix B at 64 units wide.  It has all threads loading both matrices and so has double the IADDs in the main loop.  It is also memory bound but much less so than our 64 thread version.
 
-![http://wiki.maxas.googlecode.com/hg/images/BenchSmall.png](http://wiki.maxas.googlecode.com/hg/images/BenchSmall.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchSmall.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchSmall.png)
 
 Next we look at large Matrices.  Here is where the 256 thread versions overtake the 64 and 128 thread versions.  You can see that as the matrices get larger and L2 cache gets more diluted they're able to hold steady.  This is because the total bandwidth required is less than device memory has available.  This is not the case with the 64 and 128 thread versions.  At the 4096 size we're beating cublas by 4.8%.
 
 I've also added one additional plot of the 64 thread version but with an occupancy of 3 warps per scheduler instead of 4 (or 25% down to 18.75%).  This was done by bumping the register count past 128.  You can see the performance actually increases in the bandwidth starved regimes.  This is explained by significantly better L2 cache performance (+6% hit rate) when processing 2 fewer blocks per SM.  So if you have a kernel that has enough ILP and is bandwidth bound, you may want to experiment with _lower_ occupancy.  Unmasked latencies start appearing and performance drops if we lower occupancy any more for this or the 256 thread version (which can't run at 3 warps per scheduler).
 
-![http://wiki.maxas.googlecode.com/hg/images/BenchLarge.png](http://wiki.maxas.googlecode.com/hg/images/BenchLarge.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchLarge.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchLarge.png)
 
 Finally we compare performance just within our own implementations and play with different size normalized floats.   This shows that even our 256 thread version is a little bit memory bound.  Surprisingly, the 64 thread version is the overall speed winner here.  The extra 1% in speed is explained by the 1% better L2 cache performance.  The memory accesses overlap more for the 64 thread version and the L2 has a better time caching those.  Although, the 256 version wins overall for flops/watt.  Power levels drop by at least 10% for these smaller precision floats.
 
-![http://wiki.maxas.googlecode.com/hg/images/BenchNormFloat.png](http://wiki.maxas.googlecode.com/hg/images/BenchNormFloat.png)
+![https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchNormFloat.png](https://github.com/xldrx/maxas.wiki.fixed/blob/master/img/BenchNormFloat.png)
 
 # Failed Experiments
 
