@@ -229,6 +229,40 @@ elsif ($mode =~ /^\-?\-p/i)
     print $fh MaxAs::MaxAs::Preprocess($file, $include, $debug);
     close $fh;
 }
+#Analyzing
+elsif ($mode =~ /^\-?\-a/i) {
+    while ($ARGV[0] =~ /^\-?\-D(\w+)/)
+    {
+        shift;
+        my $name  = $1;
+        my $value = shift;
+        eval "package MaxAs::MaxAs::CODE; our \$$name = '$value';";
+    }
+    my $analyze     = shift if $ARGV[0] =~ /^\-?\-analyze/i;
+    my $asmFile   = shift or usage();
+    my $asmFile2  = shift;
+
+    die "source and destination probably shouldn't be the same file\n" if $asmFile eq $asmFile2;
+
+    open my $fh,  $asmFile or die "$asmFile: $!";
+    local $/;
+    my $file = <$fh>;
+    close $fh;
+
+    my ($vol,$dir) = File::Spec->splitpath($asmFile);
+    my $include = [$vol, $dir];
+
+    if ($asmFile2)
+    {
+        open $fh, ">$asmFile2" or die "$asmFile2: $!";
+    }
+    else
+    {
+        $fh = \*STDOUT;
+    }
+    print $fh MaxAs::MaxAs::Analyze($file, $include);
+    close $fh;
+}
 # get version information
 elsif ($mode =~ /^\-?\-v/i)
 {

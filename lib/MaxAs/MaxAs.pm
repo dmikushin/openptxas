@@ -24,6 +24,133 @@ my %noDest     = map { $_ => 1 } qw(ST STG STS STL RED);
 # Map register slots to reuse control codes
 my %reuseSlots = (r8 => 1, r20 => 2, r39 => 4);
 
+# break the registers down into source and destination categories for the scheduler
+my %srcReg   = map { $_ => 1 } qw(r8 r20 r39 p12 p29 p39 X);
+my %destReg  = map { $_ => 1 } qw(r0 p0 p3 p45 p48 CC);
+my %regops   = (%srcReg, %destReg);
+my @itypes   = qw(class lat rlat tput dual);
+
+
+sub Analyze
+{
+    my ($file, $include) = @_;
+  
+    my $regMap = {};
+    $file = Preprocess($file, $include, 0, $regMap);
+    my ($lineNum, @instructs, %labels, $ctrl, @branches, %reuse);
+    my $vectors = $regMap->{__vectors};
+  
+    # push instructions into
+    foreach my $line (split "\n", $file)
+    {
+        # keep track of line nums in the physical file
+        $lineNum++;
+  
+        next unless preProcessLine($line);
+  
+        # match an instruction
+        if (my $inst = processAsmLine($line, $lineNum))
+        {
+            push @instructs, $inst;
+        }
+    }
+  
+    # efficiency analyze
+    foreach my $i (0 .. $#instructs)
+    {
+        my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
+  
+        my $match = 0;
+        foreach my $gram (@{$grammar{$op}})
+        {
+            my $capData = parseInstruct($inst, $gram) or next;
+        }
+    }
+  
+    # DAG analyze
+    my (%writes, @ready, $orderedParent);
+    foreach my $i (0 .. $#instructs)
+    {
+        my $instruct = $instructs[$i];
+        my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
+  
+        my $match = 0;
+        foreach my $gram (@{$grammar{$op}})
+        {
+            # Apply the rule pattern
+            my $capData = parseInstruct($inst, $gram) or next;
+            my (@dest, @src);
+  
+            # A predicate prefix is treated as a source reg
+            push @src, $instruct->{predReg} if $instruct->{pred};
+  
+            # Handle P2R and R2P specially
+            if ($instruct->{op} =~ m'P2R|R2P' && $capData->{i20w7})
+            {
+                my $list = $instruct->{op} eq 'R2P' ? \@dest : \@src;
+                my $mask = hex($capData->{i20w7});
+                foreach my $p (0..6)
+                {
+                    if ($mask & (1 << $p))
+                    {
+                        push @$list, "P$p";
+                    }
+                    # make this instruction dependent on any predicates it's not setting
+                    # this is to prevent a race condition for any predicate sets that are pending
+                    elsif ($instruct->{op} eq 'R2P')
+                    {
+                        push @src, "P$p";
+                    }
+                }
+            }
+  
+            # Populate our register source and destination lists, skipping any zero or true values
+            foreach my $operand (grep { exists $regops{$_} } sort keys %$capData)
+            {
+                # figure out which list to populate
+                my $list = exists($destReg{$operand}) && !exists($noDest{$instruct->{op}}) ? \@dest : \@src;
+  
+                # Filter out RZ and PT
+                my $badVal = substr($operand,0,1) eq 'r' ? 'RZ' : 'PT';
+  
+                if ($capData->{$operand} ne $badVal)
+                {
+                    # add the value to list with the correct prefix
+                    push @$list,
+                        $operand eq 'r0' ? map(getRegNum($regMap, $_), getVecRegisters($vectors, $capData)) :
+                        $operand eq 'r8' ? map(getRegNum($regMap, $_), getAddrVecRegisters($vectors, $capData)) :
+                        $operand eq 'CC' ? 'CC' :
+                        $operand eq 'X'  ? 'CC' :
+                        getRegNum($regMap, $capData->{$operand});
+                }
+            }
+
+            # Find Read-After-Write dependencies
+            foreach my $src (grep { exists $writes{$_} } @src)
+            {
+                # Memory operations get delayed access to registers but not to the predicate
+                my $regLatency = $src eq $instruct->{predReg} ? 0 : $instruct->{rlat};
+
+                # the parent should be the most recently added dest op to the stack
+                foreach my $parent (@{$writes{$src}})
+                {
+                    # add this instruction as a child of the parent
+                    # set the edge to the total latency of reg source availability
+                    #print "R $parent->{inst}\n\t\t$instruct->{inst}\n";
+                    my $latency = $src =~ m'^P\d' ? 13 : $parent->{lat};
+                    push @{$parent->{children}}, [$instruct, $latency - $regLatency];
+                    $instruct->{parents}++;
+
+                    # if the destination was conditionally executed, we also need to keep going back till it wasn't
+                    last unless $parent->{pred};
+                }
+            }
+        }
+    }
+
+    # bottleneck analyze
+}
+
 # Preprocess and Assemble a source file
 sub Assemble
 {
@@ -914,12 +1041,6 @@ sub Preprocess
 
     return $file;
 }
-
-# break the registers down into source and destination categories for the scheduler
-my %srcReg   = map { $_ => 1 } qw(r8 r20 r39 p12 p29 p39 X);
-my %destReg  = map { $_ => 1 } qw(r0 p0 p3 p45 p48 CC);
-my %regops   = (%srcReg, %destReg);
-my @itypes   = qw(class lat rlat tput dual);
 
 sub Scheduler
 {
