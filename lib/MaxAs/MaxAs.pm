@@ -7,6 +7,7 @@ use Data::Dumper;
 use MaxAs::MaxAsGrammar;
 use File::Spec;
 use Carp;
+use POSIX;
 
 our $VERSION = '1.06';
 
@@ -30,6 +31,10 @@ my %destReg  = map { $_ => 1 } qw(r0 p0 p3 p45 p48 CC);
 my %regops   = (%srcReg, %destReg);
 my @itypes   = qw(class lat rlat tput dual);
 
+# init resource usage
+my $activeWarp = 4;
+my $scheduler = 2;
+my $warpSize = 32;
 
 sub Analyze
 {
@@ -39,41 +44,161 @@ sub Analyze
     $file = Preprocess($file, $include, 0, $regMap);
     my ($lineNum, @instructs, %labels, $ctrl, @branches, %reuse);
     my $vectors = $regMap->{__vectors};
-  
-    # push instructions into
+
+    # initialize the first control instruction
+    push @instructs, $ctrl = {};
+
     foreach my $line (split "\n", $file)
     {
         # keep track of line nums in the physical file
         $lineNum++;
-  
+
         next unless preProcessLine($line);
-  
+
         # match an instruction
         if (my $inst = processAsmLine($line, $lineNum))
         {
+            # Save us from crashing the display driver
+            die "It is illegal to set a Read-After-Write dependency on a memory store op (store ops don't write to a register)\n$inst->{inst}\n"
+                if exists $noDest{$inst->{op}} && ($inst->{ctrl} & 0x000e0) != 0x000e0;
+
+            # track branches/jumps/calls/etc for label remapping
+            push @branches, @instructs+0 if exists $jumpOp{$inst->{op}};
+
+            # push the control code onto the control instruction
+            push @{$ctrl->{ctrl}}, $inst->{ctrl};
+
+            # now point the instruction to its associated control instruction
+            $inst->{ctrl} = $ctrl;
+
+            # add the op name and full instruction text
             push @instructs, $inst;
+
+            # add a 4th control instruction for every 3 instructions
+            push @instructs, $ctrl = {} if ((@instructs & 3) == 0);
         }
+        # match a label
+        elsif ($line =~ m'^([a-zA-Z]\w*):')
+        {
+            # map the label name to the index of the instruction about to be inserted
+            $labels{$1} = @instructs+0;
+        }
+        else
+        {
+            die "badly formed line at $lineNum: $line\n";
+        }
+    }
+    # add the final BRA op and align the number of instructions to a multiple of 8
+    push @{$ctrl->{ctrl}}, 0x007ff;
+    push @instructs, { op => 'BRA', inst => 'BRA 0xfffff8;' };
+    while (@instructs & 7)
+    {
+        push @instructs, $ctrl = {} if ((@instructs & 3) == 0);
+        push @{$ctrl->{ctrl}}, 0x007e0;
+        push @instructs, { op => 'NOP', inst => 'NOP;' };
+    }
+
+    # remap labels
+    foreach my $i (@branches)
+    {
+        if ($instructs[$i]{inst} !~ m'(\w+);$' || !exists $labels{$1})
+            { die "instruction has invalid label: $instructs[$i]{inst}"; }
+
+        $instructs[$i]{jump} = $labels{$1};
+
+        if (exists $relOffset{$instructs[$i]{op}})
+            { $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', (($labels{$1} - $i - 1) * 8) & 0xffffff/e; }
+        else
+            { $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', ($labels{$1} * 8) & 0xffffff/e; }
     }
   
     # efficiency analyze
     foreach my $i (0 .. $#instructs)
     {
+        #skip control instructions
+        next unless $i & 3;
+
+        my $instruct = $instructs[$i];
         my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
   
         my $match = 0;
         foreach my $gram (@{$grammar{$op}})
         {
             my $capData = parseInstruct($inst, $gram) or next;
+            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
+            $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
+
+            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
+            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            my $instructType = $gram->{type}; 
+            if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
+                $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
+                my $units = $instructType->{units};
+                $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units);
+            } elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp') {
+                my $units = $instructType->{units};
+                my $tput = $instructType->{tput};
+                $instruct->{efficiency} = 1 / (ceil(($dispatches * $warpSize) / $units) * $tput);
+            } elsif ($instructType->{class} eq 'mem') {
+                my $units = $instructType->{units};
+                my $memType = $capData->{type};
+                my $cache = $capData->{cache};
+                my $issue = 4;
+                # vector instruction
+                if ($memType =~ s/^\.//g) {
+                    $issue *= $memType / 32;
+                }
+                # TODO(keren): cache instruction ???
+                if (defined $cache) {
+                    $issue = 1;
+                }
+                $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units * $issue);
+                # TODO(keren): simulate
+            } else {
+                die "No such instruct type: ", Dumper($instruct);
+            }
         }
     }
   
     # DAG analyze
-    my (%writes, @ready, $orderedParent);
+    my (%deps);
     foreach my $i (0 .. $#instructs)
     {
+        #skip control instructions
+        next unless $i & 3;
         my $instruct = $instructs[$i];
         my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
+        # efficiency dependencies
+        if ($i > 0) {
+            my $parent = $instructs[$i-1];
+            if ($parent->{dualCnt} == 1) { # parent dual
+                if ($instruct->{dualCnt} == 0) { # links to parent and grandparent
+                    my $grandparent = $instructs[$i - 2];
+                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                } else { # not recommend issue pattern, TODO(keren): cannot dual in this way?
+                    my $grandparent = $instructs[$i - 2];
+                    if ($grandparent->{dualCnt} == 0) { # links to grandparent and parent
+                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                        push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    } else { # links to parent becuase it is illegal
+                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    }
+                }
+            } elsif ($parent->{dualCnt} == 0) { # parent single
+                if ($instruct->{dualCnt} == 0) { # links to parent
+                    if ($instruct->{efficiency} == 0) {
+                      print Dumper($instruct);
+                    }
+                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                } else { # links to grandparent
+                    my $grandparent = $instructs[$i - 2];
+                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                }
+            }
+        }
   
+        # write dependencies
         my $match = 0;
         foreach my $gram (@{$grammar{$op}})
         {
@@ -126,13 +251,13 @@ sub Analyze
             }
 
             # Find Read-After-Write dependencies
-            foreach my $src (grep { exists $writes{$_} } @src)
+            foreach my $src (grep { exists $deps{$_} } @src)
             {
                 # Memory operations get delayed access to registers but not to the predicate
                 my $regLatency = $src eq $instruct->{predReg} ? 0 : $instruct->{rlat};
 
                 # the parent should be the most recently added dest op to the stack
-                foreach my $parent (@{$writes{$src}})
+                foreach my $parent (@{$deps{$src}})
                 {
                     # add this instruction as a child of the parent
                     # set the edge to the total latency of reg source availability
@@ -145,8 +270,16 @@ sub Analyze
                     last unless $parent->{pred};
                 }
             }
+
+            # For a dest reg, push it onto the write stack
+            unshift @{$deps{$_}}, $instruct foreach @dest;
+
+            $match = 1;
+            last;
         }
     }
+
+    # calculate longest path
 
     # bottleneck analyze
 }

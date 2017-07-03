@@ -262,16 +262,16 @@ my $hmode  = qr"(?:\.(?<mode>F32|MRG_H0|MRG_H1))?$ftz";
 
 # Some of these values are guesses and need to be updated from micro benchmarks.
 # We may need to split these classes up further.
-my $s2rT  = {class => 's2r',   lat => 2,   blat => 25,  rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0};
-my $smemT = {class => 'mem',   lat => 2,   blat => 30,  rlat => 2, rhold => 20, tput => 1,   dual => 1, reuse => 0};
-my $gmemT = {class => 'mem',   lat => 2,   blat => 200, rlat => 4, rhold => 20, tput => 1,   dual => 1, reuse => 0};
-my $x32T  = {class => 'x32',   lat => 6,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 1};
-my $x64T  = {class => 'x64',   lat => 2,   blat => 128, rlat => 0, rhold => 0,  tput => 128, dual => 0, reuse => 1};
-my $shftT = {class => 'shift', lat => 6,   blat => 0,   rlat => 0, rhold => 0,  tput => 2,   dual => 0, reuse => 1};
-my $cmpT  = {class => 'cmp',   lat => 13,  blat => 0,   rlat => 0, rhold => 0,  tput => 2,   dual => 0, reuse => 1};
-my $qtrT  = {class => 'qtr',   lat => 8,   blat => 0,   rlat => 4, rhold => 0,  tput => 1,   dual => 1, reuse => 0};
-my $rroT  = {class => 'rro',   lat => 2,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0};
-my $voteT = {class => 'vote',  lat => 2,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0};
+my $s2rT  = {class => 's2r',   lat => 2,   blat => 25,  rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0, units => 32};
+my $smemT = {class => 'mem',   lat => 2,   blat => 30,  rlat => 2, rhold => 20, tput => 1,   dual => 1, reuse => 0, units => 8, type => 'shared'};
+my $gmemT = {class => 'mem',   lat => 2,   blat => 200, rlat => 4, rhold => 20, tput => 1,   dual => 1, reuse => 0, units => 8, type => 'global'};
+my $x32T  = {class => 'x32',   lat => 6,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 1, units => 32};
+my $x64T  = {class => 'x64',   lat => 2,   blat => 128, rlat => 0, rhold => 0,  tput => 128, dual => 0, reuse => 1, units => 32};
+my $shftT = {class => 'shift', lat => 6,   blat => 0,   rlat => 0, rhold => 0,  tput => 2,   dual => 0, reuse => 1, units => 32};
+my $cmpT  = {class => 'cmp',   lat => 13,  blat => 0,   rlat => 0, rhold => 0,  tput => 2,   dual => 0, reuse => 1, units => 32};
+my $qtrT  = {class => 'qtr',   lat => 8,   blat => 0,   rlat => 4, rhold => 0,  tput => 1,   dual => 1, reuse => 0, units => 32};
+my $rroT  = {class => 'rro',   lat => 2,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0, units => 32};
+my $voteT = {class => 'vote',  lat => 2,   blat => 0,   rlat => 0, rhold => 0,  tput => 1,   dual => 0, reuse => 0, units => 32};
 
 
 # Create map of op names to rules
