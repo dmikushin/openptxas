@@ -128,6 +128,13 @@ sub Analyze
             @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
             $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
 
+            # Handle P2R and R2P specially
+            if ($instruct->{op} =~ m'P2R|R2P' && $capData->{i20w7})
+            {
+                # These instructions can't be dual issued
+                $instruct->{nodual} = 1;
+            }
+
             my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
             $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
             my $instructType = $gram->{type}; 
@@ -169,8 +176,18 @@ sub Analyze
         my $instruct = $instructs[$i];
         my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
         # efficiency dependencies
-        if ($i > 0) {
-            my $parent = $instructs[$i-1];
+        {
+            my ($parent, $grandparent);
+            if (($i & 3) == 1) {
+                $parent = $instructs[$i - 2] if $i > 1;
+                $grandparent = $instructs[$i - 3] if $i > 2;
+            } elsif (($i & 3) == 2) {
+                $parent = $instructs[$i - 1];
+                $grandparent = $instructs[$i - 3] if $i > 2;
+            } elsif (($i & 3) == 3) {
+                $parent = $instructs[$i - 1];
+                $grandparent = $instructs[$i - 2]; 
+            }
             if ($parent->{dualCnt} == 1) { # parent dual
                 if ($instruct->{dualCnt} == 0) { # links to parent and grandparent
                     my $grandparent = $instructs[$i - 2];
@@ -187,9 +204,6 @@ sub Analyze
                 }
             } elsif ($parent->{dualCnt} == 0) { # parent single
                 if ($instruct->{dualCnt} == 0) { # links to parent
-                    if ($instruct->{efficiency} == 0) {
-                      print Dumper($instruct);
-                    }
                     push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
                 } else { # links to grandparent
                     my $grandparent = $instructs[$i - 2];
@@ -197,18 +211,20 @@ sub Analyze
                 }
             }
         }
-  
+
         # write dependencies
         my $match = 0;
-        foreach my $gram (@{$grammar{$op}})
+        foreach my $gram (@{$grammar{$instruct->{op}}})
         {
-            # Apply the rule pattern
-            my $capData = parseInstruct($inst, $gram) or next;
+            my $capData = parseInstruct($instruct->{inst}, $gram) or next;
             my (@dest, @src);
-  
+
+            # copy over instruction types for easier access
+            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
+
             # A predicate prefix is treated as a source reg
             push @src, $instruct->{predReg} if $instruct->{pred};
-  
+
             # Handle P2R and R2P specially
             if ($instruct->{op} =~ m'P2R|R2P' && $capData->{i20w7})
             {
@@ -227,17 +243,19 @@ sub Analyze
                         push @src, "P$p";
                     }
                 }
+                # These instructions can't be dual issued
+                $instruct->{nodual} = 1;
             }
-  
+
             # Populate our register source and destination lists, skipping any zero or true values
             foreach my $operand (grep { exists $regops{$_} } sort keys %$capData)
             {
                 # figure out which list to populate
                 my $list = exists($destReg{$operand}) && !exists($noDest{$instruct->{op}}) ? \@dest : \@src;
-  
+
                 # Filter out RZ and PT
                 my $badVal = substr($operand,0,1) eq 'r' ? 'RZ' : 'PT';
-  
+
                 if ($capData->{$operand} ne $badVal)
                 {
                     # add the value to list with the correct prefix
@@ -263,7 +281,20 @@ sub Analyze
                     # set the edge to the total latency of reg source availability
                     #print "R $parent->{inst}\n\t\t$instruct->{inst}\n";
                     my $latency = $src =~ m'^P\d' ? 13 : $parent->{lat};
-                    push @{$parent->{children}}, [$instruct, $latency - $regLatency];
+                    # update weights
+                    my $find = 0;
+                    foreach my $child (@{$parent->{children}}) {
+                        my $ins = @$child[0];
+                        my $weight = @$child[1];
+                        if ($ins eq $instruct) {
+                            @$child[1] = $weight if $weight > ($latency - $regLatency);
+                            $find = 1;
+                            last;
+                        }
+                    }
+                    if ($find == 0) {
+                         push @{$parent->{children}}, [$instruct, $latency - $regLatency];
+                    }
                     $instruct->{parents}++;
 
                     # if the destination was conditionally executed, we also need to keep going back till it wasn't
@@ -277,9 +308,16 @@ sub Analyze
             $match = 1;
             last;
         }
+        die "Unable to recognize instruction at line: $lineNum: $instruct->{inst}\n" unless $match;
     }
+    # print Dumper(%deps);
 
     # calculate longest path
+    # foreach my $i (0 .. $#instructs)
+    # {
+    #     next unless $i & 3;
+    #     print Dumper($instructs[$i]->{children}[0][1]);
+    # }
 
     # bottleneck analyze
 }
