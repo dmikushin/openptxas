@@ -46,15 +46,15 @@ sub LongestPath
 
     # calculate longest path
     my %path;
-    foreach my $i (0 .. $#instructs)
+    foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs[$i];
+        my $instruct = $instructs->[$i];
         $path{$instruct} = 0;
     }
 
-    foreach my $i (0 .. $#instructs)
+    foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs[$i];
+        my $instruct = $instructs->[$i];
         foreach my $child (@{$instruct->{children}}) {
             my $ins = @$child[0];
             my $weight = @$child[1];
@@ -63,9 +63,9 @@ sub LongestPath
     }
 
     my $longestPath = 0;
-    foreach my $i (0 .. $#instructs)
+    foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs[$i];
+        my $instruct = $instructs->[$i];
         $longestPath = $path{$instruct} if $path{$instruct} > $longestPath;
     }
 
@@ -74,15 +74,18 @@ sub LongestPath
 
 sub PreprocessBlock
 {
-    # preprocess instructions
-    foreach my $line (split "\n", $analyzeBlocks[$i])
+    my ($analyzeBlock) = @_;
+    my ($lineNum, @instructs, @branches, %labels);
+
+    # Preprocess instructions
+    foreach my $line (split "\n", $analyzeBlock)
     {
         # keep track of line nums in the physical file
         $lineNum++;
 
         next unless preProcessLine($line);
 
-        # match an instruction
+        # Match an instruction
         if (my $inst = processAsmLine($line, $lineNum))
         {
             # Save us from crashing the display driver
@@ -92,16 +95,10 @@ sub PreprocessBlock
             # track branches/jumps/calls/etc for label remapping
             push @branches, @instructs+0 if exists $jumpOp{$inst->{op}};
 
-            # push the control code onto the control instruction
-            push @{$ctrl->{ctrl}}, $inst->{ctrl};
-
-            # now point the instruction to its associated control instruction
-            $inst->{ctrl} = $ctrl;
-
             # add the op name and full instruction text
             push @instructs, $inst;
         }
-        # match a label
+        # Match a label
         elsif ($line =~ m'^([a-zA-Z]\w*):')
         {
             # map the label name to the index of the instruction about to be inserted
@@ -117,26 +114,35 @@ sub PreprocessBlock
     foreach my $i (@branches)
     {
         if ($instructs[$i]{inst} !~ m'(\w+);$' || !exists $labels{$1})
-            { die "instruction has invalid label: $instructs[$i]{inst}"; }
+        {
+            die "instruction has invalid label: $instructs[$i]{inst}";
+        }
 
         $instructs[$i]{jump} = $labels{$1};
 
         if (exists $relOffset{$instructs[$i]{op}})
-            { $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', (($labels{$1} - $i - 1) * 8) & 0xffffff/e; }
+        {
+            $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', (($labels{$1} - $i - 1) * 8) & 0xffffff/e;
+        }
         else
-            { $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', ($labels{$1} * 8) & 0xffffff/e; }
+        {
+            $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', ($labels{$1} * 8) & 0xffffff/e;
+        }
     }
+
+    return @instructs;
 }
 
 sub CalculateEfficiency
 {
-    # efficiency analyze
-    foreach my $i (0 .. $#instructs)
+    my ($instructs) = @_;
+
+    # Analyze efficiency
+    foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs[$i];
-        my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
   
-        my $match = 0;
         foreach my $gram (@{$grammar{$op}})
         {
             my $capData = parseInstruct($inst, $gram) or next;
@@ -153,370 +159,394 @@ sub CalculateEfficiency
             my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
             $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
             my $instructType = $gram->{type}; 
-            if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
-                $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
+            if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' ||
+                $instructType->{class} eq 'qtr' || $instructType->{class} eq 'rro' ||
+                $instructType->{class} eq 'vote')
+            {
                 my $units = $instructType->{units};
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units);
-            } elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp') {
+            }
+            elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp')
+            {
                 my $units = $instructType->{units};
                 my $tput = $instructType->{tput};
                 $instruct->{efficiency} = 1 / (ceil(($dispatches * $warpSize) / $units) * $tput);
-            } elsif ($instructType->{class} eq 'mem') {
+            }
+            elsif ($instructType->{class} eq 'mem')
+            {
                 my $units = $instructType->{units};
                 my $memType = $capData->{memType};
                 my $cache = $capData->{memCache};
                 my $issue = $warpSize / $units;
                 # vector instruction
-                if ($memType =~ s/^\.//g) {
+                if ($memType =~ s/^\.//g)
+                {
                     $issue *= $memType / $warpSize;
                 }
                 # TODO(keren): cache instruction ???
-                if (defined $cache) {
+                if (defined $cache)
+                {
                     $issue = 1;
                 }
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units * $issue);
                 # TODO(keren): simulate
-            } else {
+            }
+            else
+            {
                 die "No such instruct type: ", Dumper($instruct);
             }
         }
     }
 }
 
-
 sub AnalyzeDAG
 {
-        foreach my $i (0 .. $#instructs)
+    my ($instructs, $effInstructs, $regMap) = @_;
+    my $vectors = $regMap->{__vectors};
+    my %deps;
+
+    foreach my $i (0 .. $#$instructs)
+    {
+        #skip control instructions
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
+
+        # efficiency dependencies
+        if ($i > 0)
         {
-            #skip control instructions
-            my $instruct = $instructs[$i];
-            my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
-            # efficiency dependencies
-            if ($i > 0) {
-                my $parent = $instructs[$i - 1];
-                my $effParent = $effInstructs[$i - 1];
-                if ($parent->{dualCnt} == 1) { # parent dual
-                    if ($instruct->{dualCnt} == 0) { # links to parent and grandparent
-                        my $grandparent = $instructs[$i - 2];
-                        my $effGrandparent = $effInstructs[$i - 2];
-                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    } else { # not recommend issue pattern, TODO(keren): cannot dual in this way?
-                        my $grandparent = $instructs[$i - 2];
-                        my $effGrandparent = $effInstructs[$i - 2];
-                        if ($grandparent->{dualCnt} == 0) { # links to grandparent and parent
-                            push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                            push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                            push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                            push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        } else { # links to parent becuase it is illegal
-                            push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                            push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        }
-                    }
-                } elsif ($parent->{dualCnt} == 0) { # parent single
-                    if ($instruct->{dualCnt} == 0) { # links to parent
-                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    } else { # links to grandparent
-                        my $grandparent = $instructs[$i - 2];
-                        my $effGrandparent = $instructs[$i - 2];
-                        push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    }
-                }
-            }
-
-            # write dependencies
-            my $match = 0;
-            foreach my $gram (@{$grammar{$instruct->{op}}})
+            my $parent = $instructs->[$i - 1];
+            my $effParent = $effInstructs->[$i - 1];
+            if ($parent->{dualCnt} == 1) # parent dual
             {
-                my $capData = parseInstruct($instruct->{inst}, $gram) or next;
-                my (@dest, @src);
-
-                # copy over instruction types for easier access
-                @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
-
-                # A predicate prefix is treated as a source reg
-                push @src, $instruct->{predReg} if $instruct->{pred};
-
-                # Handle P2R and R2P specially
-                if ($instruct->{op} =~ m'P2R|R2P' && $capData->{i20w7})
+                if ($instruct->{dualCnt} == 0) # links to parent and grandparent
                 {
-                    my $list = $instruct->{op} eq 'R2P' ? \@dest : \@src;
-                    my $mask = hex($capData->{i20w7});
-                    foreach my $p (0..6)
-                    {
-                        if ($mask & (1 << $p))
-                        {
-                            push @$list, "P$p";
-                        }
-                        # make this instruction dependent on any predicates it's not setting
-                        # this is to prevent a race condition for any predicate sets that are pending
-                        elsif ($instruct->{op} eq 'R2P')
-                        {
-                            push @src, "P$p";
-                        }
-                    }
-                    # These instructions can't be dual issued
-                    $instruct->{nodual} = 1;
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
                 }
-                # Populate our register source and destination lists, skipping any zero or true values
-                foreach my $operand (grep { exists $regops{$_} } sort keys %$capData)
+                else # not recommend issue pattern, TODO(keren): cannot dual in this way?
                 {
-                    # figure out which list to populate
-                    my $list = exists($destReg{$operand}) && !exists($noDest{$instruct->{op}}) ? \@dest : \@src;
-
-                    # Filter out RZ and PT
-                    my $badVal = substr($operand,0,1) eq 'r' ? 'RZ' : 'PT';
-
-                    if ($capData->{$operand} ne $badVal)
-                    {
-                        # add the value to list with the correct prefix
-                        push @$list,
-                            $operand eq 'r0' ? map(getRegNum($regMap, $_), getVecRegisters($vectors, $capData)) :
-                            $operand eq 'r8' ? map(getRegNum($regMap, $_), getAddrVecRegisters($vectors, $capData)) :
-                            $operand eq 'CC' ? 'CC' :
-                            $operand eq 'X'  ? 'CC' :
-                            getRegNum($regMap, $capData->{$operand});
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    if ($grandparent->{dualCnt} == 0)
+                    { # links to grandparent and parent
+                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                        push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                        push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    }
+                    else
+                    { # links to parent becuase it is illegal
+                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
                     }
                 }
-                # Find Read-After-Write dependencies
-                foreach my $src (grep { exists $deps{$_} } @src)
-                {
-                    # Memory operations get delayed access to registers but not to the predicate
-                    my $regLatency = $src eq $instruct->{predReg} ? 0 : $instruct->{rlat};
-
-                    # the parent should be the most recently added dest op to the stack
-                    foreach my $parent (@{$deps{$src}})
-                    {
-                        # add this instruction as a child of the parent
-                        # set the edge to the total latency of reg source availability
-                        #print "R $parent->{inst}\n\t\t$instruct->{inst}\n";
-                        my $latency = $src =~ m'^P\d' ? 13 : $parent->{lat};
-                        # update weights
-                        my $find = 0;
-                        foreach my $child (@{$parent->{children}}) {
-                            my $ins = @$child[0];
-                            my $weight = @$child[1];
-                            if ($ins eq $instruct) {
-                                @$child[1] = $weight if $weight > ($latency - $regLatency);
-                                $find = 1;
-                                last;
-                            }
-                        }
-                        if ($find == 0) {
-                             push @{$parent->{children}}, [$instruct, $latency - $regLatency];
-                        }
-                        $instruct->{parents}++;
-
-                        # if the destination was conditionally executed, we also need to keep going back till it wasn't
-                        last unless $parent->{pred};
-                    }
-                }
-
-                # For a dest reg, push it onto the write stack
-                unshift @{$deps{$_}}, $instruct foreach @dest;
-
-                $match = 1;
-                last;
             }
-            die "Unable to recognize instruction at line: $lineNum: $instruct->{inst}\n" unless $match;
+            elsif ($parent->{dualCnt} == 0) # parent single
+            {
+                if ($instruct->{dualCnt} == 0) # links to parent
+                {
+                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                }
+                else # links to grandparent
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $instructs->[$i - 2];
+                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                    push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
+                }
+            }
         }
+
+        # write dependencies
+        my $match = 0;
+        foreach my $gram (@{$grammar{$instruct->{op}}})
+        {
+            my $capData = parseInstruct($instruct->{inst}, $gram) or next;
+            my (@dest, @src);
+
+            # copy over instruction types for easier access
+            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
+
+            # A predicate prefix is treated as a source reg
+            push @src, $instruct->{predReg} if $instruct->{pred};
+
+            # Handle P2R and R2P specially
+            if ($instruct->{op} =~ m'P2R|R2P' && $capData->{i20w7})
+            {
+                my $list = $instruct->{op} eq 'R2P' ? \@dest : \@src;
+                my $mask = hex($capData->{i20w7});
+                foreach my $p (0..6)
+                {
+                    if ($mask & (1 << $p))
+                    {
+                        push @$list, "P$p";
+                    }
+                    # make this instruction dependent on any predicates it's not setting
+                    # this is to prevent a race condition for any predicate sets that are pending
+                    elsif ($instruct->{op} eq 'R2P')
+                    {
+                        push @src, "P$p";
+                    }
+                }
+                # These instructions can't be dual issued
+                $instruct->{nodual} = 1;
+            }
+            # Populate our register source and destination lists, skipping any zero or true values
+            foreach my $operand (grep { exists $regops{$_} } sort keys %$capData)
+            {
+                # figure out which list to populate
+                my $list = exists($destReg{$operand}) && !exists($noDest{$instruct->{op}}) ? \@dest : \@src;
+
+                # Filter out RZ and PT
+                my $badVal = substr($operand,0,1) eq 'r' ? 'RZ' : 'PT';
+
+                if ($capData->{$operand} ne $badVal)
+                {
+                    # add the value to list with the correct prefix
+                    push @$list,
+                        $operand eq 'r0' ? map(getRegNum($regMap, $_), getVecRegisters($vectors, $capData)) :
+                        $operand eq 'r8' ? map(getRegNum($regMap, $_), getAddrVecRegisters($vectors, $capData)) :
+                        $operand eq 'CC' ? 'CC' :
+                        $operand eq 'X'  ? 'CC' :
+                        getRegNum($regMap, $capData->{$operand});
+                }
+            }
+
+            # Find Read-After-Write dependencies
+            foreach my $src (grep { exists $deps{$_} } @src)
+            {
+                # Memory operations get delayed access to registers but not to the predicate
+                my $regLatency = $src eq $instruct->{predReg} ? 0 : $instruct->{rlat};
+
+                # the parent should be the most recently added dest op to the stack
+                foreach my $parent (@{$deps{$src}})
+                {
+                    # add this instruction as a child of the parent
+                    # set the edge to the total latency of reg source availability
+                    #print "R $parent->{inst}\n\t\t$instruct->{inst}\n";
+                    my $latency = $src =~ m'^P\d' ? 13 : $parent->{lat};
+                    # update weights
+                    my $find = 0;
+                    foreach my $child (@{$parent->{children}})
+                    {
+                        my $ins = @$child[0];
+                        my $weight = @$child[1];
+                        if ($ins eq $instruct)
+                        {
+                            @$child[1] = $weight if $weight > ($latency - $regLatency);
+                            $find = 1;
+                            last;
+                        }
+                    }
+                    # parent and child does not has efficiency dependency
+                    if ($find == 0)
+                    {
+                         push @{$parent->{children}}, [$instruct, $latency - $regLatency];
+                    }
+                    $instruct->{parents}++;
+
+                    # if the destination was conditionally executed, we also need to keep going back till it wasn't
+                    last unless $parent->{pred};
+                }
+            }
+
+            # For a dest reg, push it onto the write stack
+            unshift @{$deps{$_}}, $instruct foreach @dest;
+
+            $match = 1;
+            last;
+        }
+        die "Unable to recognize instruction: $instruct->{inst}\n" unless $match;
+    }
 }
 
 sub ConstructEfficiencyDAG
 {
-        foreach my $i (0 .. $#x32Instructs)
-        {
-            my ($op, $inst, $ctrl) = @{$x32Instructs[$i]}{qw(op inst ctrl)};
-  
-            foreach my $gram (@{$grammar{$op}}) {
-                my $instructType = $gram->{type};
+    my ($instructs, $type) = @_;
 
-                if ($instructType->{class} ne 'x32') {
-                    foreach my $child (@{$instruct->{children}}) {
-                        $child->[1] = 0;
-                    }
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instruct}{qw(op inst)};
+  
+        foreach my $gram (@{$grammar{$op}})
+        {
+            my $instructType = $gram->{type};
+
+            if ($instructType->{class} ne $type)
+            {
+                foreach my $child (@{$instruct->{children}})
+                {
+                    $child->[1] = 0;
                 }
             }
         }
-
-        foreach my $i (0 .. $#memInstructs)
-        {
-            my ($op, $inst, $ctrl) = @{$memInstructs[$i]}{qw(op inst ctrl)};
-  
-            foreach my $gram (@{$grammar{$op}}) {
-                my $instructType = $gram->{type};
-
-                if ($instructType->{class} ne 'mem') {
-                    foreach my $child (@{$instruct->{children}}) {
-                        $child->[1] = 0;
-                    }
-                }
-            }
-        }
-
-        foreach my $i (0 .. $#x64Instructs)
-        {
-            my ($op, $inst, $ctrl) = @{$x64Instructs[$i]}{qw(op inst ctrl)};
-  
-            foreach my $gram (@{$grammar{$op}}) {
-                my $instructType = $gram->{type};
-
-                if ($instructType->{class} ne 'x64') {
-                    foreach my $child (@{$instruct->{children}}) {
-                        $child->[1] = 0;
-                    }
-                }
-            }
-        }
-
+    }
 }
 
 sub CalculateBcomp
 {
-        # Bcomp
-        my $unitsSum = 0;
-        my $unitsUse = 0;
-        foreach my $i (0 .. $#instructs)
-        {
-            my $instruct = $instructs[$i];
-            my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
-  
-            my $match = 0;
-            foreach my $gram (@{$grammar{$op}})
-            {
-                my $capData = parseInstruct($inst, $gram) or next;
-                @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
-                $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
+    my ($instructs) = @_;
+    # Bcomp
+    my $unitsSum = 0;
+    my $unitsUse = 0;
 
-                my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
-                $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
-                my $instructType = $gram->{type}; 
-                if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
-                    $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
-                    $unitsSum = $unitsSum +  $instructType->{units};
-                    $unitsUse = $unitsUse + $instruct->{efficiency} * $dispatches * $warpSize  
-                }
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
+  
+        my $match = 0;
+        foreach my $gram (@{$grammar{$op}})
+        {
+            my $capData = parseInstruct($inst, $gram) or next;
+            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
+            $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
+
+            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
+            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            my $instructType = $gram->{type}; 
+            if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
+                $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
+                $unitsSum = $unitsSum +  $instructType->{units};
+                $unitsUse = $unitsUse + $instruct->{efficiency} * $dispatches * $warpSize  
             }
         }
-        print "Bcomp: ", $unitsUse / $unitsSum;
-
+    }
+    print "Bcomp: ", $unitsSum > 0 ? $unitsUse / $unitsSum : 0, "\n";
 }
 
 sub CalculateBmem
 {
-        # Bmem
-        my $sharedWidthSum = 0;
-        my $sharedWidthUse = 0;
-        my $globalWidthSum = 0;
-        my $globalWidthUse = 0;
-        foreach my $i (0 .. $#instructs)
-        {
-            my $instruct = $instructs[$i];
-            my ($op, $inst, $ctrl) = @{$instructs[$i]}{qw(op inst ctrl)};
+    my ($instructs) = @_;
+    # Bmem
+    my $sharedWidthSum = 0;
+    my $sharedWidthUse = 0;
+    my $globalWidthSum = 0;
+    my $globalWidthUse = 0;
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
   
-            my $match = 0;
-            foreach my $gram (@{$grammar{$op}})
-            {
-                my $capData = parseInstruct($inst, $gram) or next;
-                @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
-                $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
+        my $match = 0;
+        foreach my $gram (@{$grammar{$op}})
+        {
+            my $capData = parseInstruct($inst, $gram) or next;
+            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
+            $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
 
-                my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
-                $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
-                my $instructType = $gram->{type}; 
-                if ($instructType->{class} eq 'mem') {
-                    my $memType = $capData->{memType};
-                    # default 32 bit
-                    my $insWidth = 4;
-                    # vector instruction
-                    if ($memType =~ s/^\.//g) {
-                        $insWidth = $memType / 8;
-                    }
-                    if ($instructType->{type} eq 'global') {
-                        $globalWidthSum = $globalWidthSum + 16 * $warpSize; # LDG.512
-                        $globalWidthUse = $globalWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
-                    } else { #shared 
-                        $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize;
-                        $sharedWidthUse = $sharedWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
-                    }
+            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
+            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            my $instructType = $gram->{type}; 
+            if ($instructType->{class} eq 'mem') {
+                my $memType = $capData->{memType};
+                # default 32 bit
+                my $insWidth = 4;
+                # vector instruction
+                if ($memType =~ s/^\.//g) {
+                    $insWidth = $memType / 8;
+                }
+                if ($instructType->{type} eq 'global') {
+                    $globalWidthSum = $globalWidthSum + 16 * $warpSize; # LDG.512
+                    $globalWidthUse = $globalWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
+                } else { #shared 
+                    $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize;
+                    $sharedWidthUse = $sharedWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
                 }
             }
         }
-        print "Bshared ", $sharedWidthUse / $sharedWidthSum;
-        print "Bglobal: ", $globalWidthUse / $globalWidthSum;
+    }
+    print "Bshared: ", $sharedWidthSum > 0 ? $sharedWidthUse / $sharedWidthSum : 0, "\n";
+    print "Bglobal: ", $globalWidthSum > 0 ? $globalWidthUse / $globalWidthSum : 0, "\n";
 }
 
 sub CalculateBilp
 {
-        # efficiency dependencies for each unit
-        # TODO(keren): analyze more units
-        @x32Instructs = @effInstructs;
-        @memInstructs = @effInstructs;
-        @x64Instructs = @effInstructs;
-        ConstructEfficiencyDAG();
-        my $cx32eff = LongestPath($x32Instructs);
-        my $cx64eff = LongestPath($x64Instructs);
-        my $cmemeff = LongestPath($memInstructs);
-        my $maxeff = max($cx32eff, $cx64eff, $cmemeff);
-        print "Bilp: ", $maxeff / $cweff;
+    # efficiency dependencies for each unit
+    # TODO(keren): analyze more units
+    my ($effInstructs, $cweff) = @_;
+
+    my @x32Instructs = @$effInstructs;
+    my @memInstructs = @$effInstructs;
+    my @x64Instructs = @$effInstructs;
+
+    ConstructEfficiencyDAG(\@x32Instructs, 'x32');
+    ConstructEfficiencyDAG(\@x64Instructs, 'x64');
+    ConstructEfficiencyDAG(\@memInstructs, 'mem');
+
+    my $cx32eff = LongestPath(\@x32Instructs);
+    my $cx64eff = LongestPath(\@x64Instructs);
+    my $cmemeff = LongestPath(\@memInstructs);
+    my $maxeff = max($cx32eff, $cx64eff, $cmemeff);
+
+    print "Bilp: ", $cweff > 0 ? $maxeff / $cweff : 0, "\n";
 }
 
+# Bpipe
+# push longest path
 sub CalculateBpipe
 {
-        # Bpipe
-        # push longest path
-        my %path;
-        foreach my $i (0 .. $#instructs)
-        {
-            my $instruct = $instructs[$i];
-            $path{$instruct} = 0;
-        }
+    my ($instructs, $cweff) = @_;
 
-        foreach my $i (0 .. $#instructs)
+    my %path;
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        $path{$instruct} = 0;
+    }
+
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        foreach my $child (@{$instruct->{children}})
         {
-            my $instruct = $instructs[$i];
-            foreach my $child (@{$instruct->{children}}) {
-                my $ins = @$child[0];
-                my $weight = @$child[1];
-                $path{$ins} = $weight + $path{$instruct} if $weight + $path{$instruct} > $path{$ins};
-                $ins->{prev} = {prevInstruct=>$instruct, prevWeight=>$weight};
+            my $ins = @$child[0];
+            my $weight = @$child[1];
+            $path{$ins} = $weight + $path{$instruct} if $weight + $path{$instruct} > $path{$ins};
+            $ins->{prev} = {prevInstruct=>$instruct, prevWeight=>$weight};
+        }
+    }
+
+    my $longestPath = 0;
+    foreach my $i (0 .. $#$instructs)
+    {
+        my $instruct = $instructs->[$i];
+        $longestPath = $path{$instruct} if $path{$instruct} > $longestPath;
+    }
+
+    my $longestLatency = 0;
+    foreach my $i (0 .. $#$instructs) 
+    {
+        my $instruct = $instructs->[$i];
+        my @latencyPath;
+        if ($path{$instruct} == $longestPath)
+        {
+            while (defined($instruct->{prev}))
+            {
+                push @latencyPath, {to=>$instruct, from=>$instruct->{prev}};
+                $instruct = $instruct->{prev};
             }
         }
-
-        my $longestPath = 0;
-        foreach my $i (0 .. $#instructs)
+        my $latencies = 0;
+        foreach my $ins (@latencyPath)
         {
-            my $instruct = $instructs[$i];
-            $longestPath = $path{$instruct} if $path{$instruct} > $longestPath;
-        }
-
-        my $longestLatency = 0;
-        foreach my $i (0 .. $#instructs) 
-        {
-            my $instruct = $instructs[$i];
-            my @latencyPath;
-            if ($path{$instruct} == $longestPath) {
-                while (defined($instruct->{prev}) {
-                    push @latencyPath, {to=>$instruct, from=>$instruct->{prev}};
-                    $instruct = $instruct->{prev};
-                }
+            my $from = $ins->{from};
+            my $weight = $from->{prevWeight};
+            if ($weight == $from->{lat})
+            {
+                $latencies = $latencies + $weight; 
             }
-            my $latencies = 0;
-            foreach my $ins (@latencyPath) {
-                my $from = $ins->{from};
-                my $weight = $from->{prevWeight};
-                if ($weight == $from->{lat}) {
-                    $latencies = $latencies + $weight; 
-                }
-            }
-            $longestLatency = $latencies if $latencies > $longestLatency;
         }
-        print "Bpipe: ", $longestLatency / ($cweff * $activeWarp / $scheduler);
+        $longestLatency = $latencies if $latencies > $longestLatency;
+    }
+    my $eff = $cweff * $activeWarp / $scheduler;
+    print "Bpipe: ", $eff > 0 ? $longestLatency / $eff : 0, "\n";
 }
 
 sub Analyze
@@ -533,38 +563,29 @@ sub Analyze
     # Extract analyze block
     my @analyzeBlocks = $file =~ /$AnalyzeRe/g;
 
-    # Schedule them
+    # Iterate over analyz blocks
     foreach my $i (0 .. $#analyzeBlocks)
     {
-        my ($lineNum, @instructs, %labels, $ctrl, @branches);
-        my $vectors = $regMap->{__vectors};
-        my (%deps);
-        @effInstructs = @instructs;
+        # Preprocess instructs
+        my @instructs = PreprocessBlock($analyzeBlocks[$i]);
 
-        PreprocessBlock();
+        # Calculate each instruction's efficiency
+        my @effInstructs = @instructs;
+        CalculateEfficiency(\@instructs);
 
-        CalculateEfficiency();
-
-        AnalyzeDAG();
-        
-        # DAG analyze
+        # Analyze DAG dependencies
+        AnalyzeDAG(\@instructs, \@effInstructs, $regMap);
 
         # calculate longest path
-        my $predictedCycle = LongestPath($instructs);
-        
+        my $predictedCycle = LongestPath(\@instructs);
         print "predict cycles $predictedCycle\n";
 
         # bottleneck analyze
-        CalculateBcomp();
-        CalculateBmem();
-        
-        #Bilp
-        # CWeff
-        my $cweff = LongestPath($effInstructs);
-
-        CalculateBilp();
-        
-        CalculateBpipe();
+        CalculateBcomp(\@instructs);
+        CalculateBmem(\@instructs);
+        my $cweff = LongestPath(\@effInstructs);
+        CalculateBilp(\@effInstructs, $cweff);
+        CalculateBpipe(\@effInstructs, $cweff);
     }
 
     print "End analyze\n";
