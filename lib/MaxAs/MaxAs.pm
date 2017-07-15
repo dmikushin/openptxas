@@ -36,9 +36,35 @@ my @itypes   = qw(class lat rlat tput dual);
 my $activeWarp = 4;
 my $scheduler = 2;
 my $warpSize = 32;
-my $bankWidth = 8;
+my $bankWidth = 4;
+my $maxThreads = 1024;
+my $maxSharedMem = 49152;
+my $maxReg = 65536;
 
 my $AnalyzeRe = qr'^[\t ]*<ANALYZE_BLOCK>(.*?)^\s*</ANALYZE_BLOCK>\n?'ms;
+
+sub Occupancy
+{
+    my $fileName = @_;
+    open (my $fh), $fileName or die "Cannot open: ", $fileName;
+    my $usedThreads = <$fh>;
+    chomp $usedThreads;
+    $usedThreads =~ s/threads=//g;
+
+    my $usedSharedMem = <$fh>;
+    chomp $usedSharedMem;
+    $usedSharedMem =~ s/shared=//g;
+
+    my $usedReg = <$fh>;
+    chomp $usedReg;
+    $usedReg =~ s/regs=//g;
+
+    my $activeBlocks = min(ceil($maxThreads / $usedThreads),
+      ceil($maxSharedMem / $usedSharedMem), ceil($maxReg / $usedReg));
+    my $activeWarps = $usedThreads / $warpSize;
+
+    return ($activeBlocks, $activeWarps);
+}
 
 sub LongestPath
 {
@@ -76,6 +102,9 @@ sub PreprocessBlock
 {
     my ($analyzeBlock) = @_;
     my ($lineNum, @instructs, @branches, %labels);
+
+    # push first dummy instruct
+    push @instructs, {dualCnt=>0, nodual=>1};
 
     # Preprocess instructions
     foreach my $line (split "\n", $analyzeBlock)
@@ -136,11 +165,17 @@ sub PreprocessBlock
 sub CalculateEfficiency
 {
     my ($instructs) = @_;
+    print "Instructions\tDispatches\tEcompute\tEcmp\tEmem\n";
 
     # Analyze efficiency
-    foreach my $i (0 .. $#$instructs)
+    foreach my $i (0 .. $#$instructs) 
     {
         my $instruct = $instructs->[$i];
+        $instruct->{dualCnt} = 0;
+        $instruct->{nodual} = 1;
+
+        next unless $i != 0;
+
         my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
   
         foreach my $gram (@{$grammar{$op}})
@@ -158,6 +193,7 @@ sub CalculateEfficiency
 
             my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
             $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            print $inst, "\t", $dispatches, "\t";
             my $instructType = $gram->{type}; 
             if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' ||
                 $instructType->{class} eq 'qtr' || $instructType->{class} eq 'rro' ||
@@ -165,12 +201,14 @@ sub CalculateEfficiency
             {
                 my $units = $instructType->{units};
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units);
+                print $instruct->{efficiency}, "\t0\t0";
             }
             elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp')
             {
                 my $units = $instructType->{units};
                 my $tput = $instructType->{tput};
                 $instruct->{efficiency} = 1 / (ceil(($dispatches * $warpSize) / $units) * $tput);
+                print "0\t", $instruct->{efficiency}, "\t0";
             }
             elsif ($instructType->{class} eq 'mem')
             {
@@ -190,11 +228,13 @@ sub CalculateEfficiency
                 }
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units * $issue);
                 # TODO(keren): simulate
+                print "0\t0\t", $instruct->{efficiency};
             }
             else
             {
                 die "No such instruct type: ", Dumper($instruct);
             }
+            print "\n";
         }
     }
 }
@@ -261,6 +301,8 @@ sub AnalyzeDAG
                 }
             }
         }
+
+        next unless $i != 0;
 
         # write dependencies
         my $match = 0;
@@ -371,6 +413,8 @@ sub ConstructEfficiencyDAG
 
     foreach my $i (0 .. $#$instructs)
     {
+        next unless $i != 0;
+
         my $instruct = $instructs->[$i];
         my ($op, $inst) = @{$instruct}{qw(op inst)};
   
@@ -398,6 +442,8 @@ sub CalculateBcomp
 
     foreach my $i (0 .. $#$instructs)
     {
+        next unless $i != 0;
+
         my $instruct = $instructs->[$i];
         my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
   
@@ -431,6 +477,8 @@ sub CalculateBmem
     my $globalWidthUse = 0;
     foreach my $i (0 .. $#$instructs)
     {
+        next unless $i != 0;
+
         my $instruct = $instructs->[$i];
         my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
   
@@ -576,11 +624,11 @@ sub Analyze
         # Analyze DAG dependencies
         AnalyzeDAG(\@instructs, \@effInstructs, $regMap);
 
-        # calculate longest path
+        ## calculate longest path
         my $predictedCycle = LongestPath(\@instructs);
         print "predict cycles $predictedCycle\n";
 
-        # bottleneck analyze
+        ## bottleneck analyze
         CalculateBcomp(\@instructs);
         CalculateBmem(\@instructs);
         my $cweff = LongestPath(\@effInstructs);
