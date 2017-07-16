@@ -33,7 +33,7 @@ my %regops   = (%srcReg, %destReg);
 my @itypes   = qw(class lat rlat tput dual);
 
 # init resource usage
-my $activeWarp = 4;
+my $activeWarp = 1;
 my $scheduler = 2;
 my $warpSize = 32;
 my $bankWidth = 4;
@@ -45,8 +45,10 @@ my $AnalyzeRe = qr'^[\t ]*<ANALYZE_BLOCK>(.*?)^\s*</ANALYZE_BLOCK>\n?'ms;
 
 sub Occupancy
 {
-    my $fileName = @_;
-    open (my $fh), $fileName or die "Cannot open: ", $fileName;
+    my ($fileName) = @_;
+
+    local $/ = "\n";
+    open my $fh, "<", $fileName or die "Cannot open: ", $fileName;
     my $usedThreads = <$fh>;
     chomp $usedThreads;
     $usedThreads =~ s/threads=//g;
@@ -59,11 +61,12 @@ sub Occupancy
     chomp $usedReg;
     $usedReg =~ s/regs=//g;
 
-    my $activeBlocks = min(ceil($maxThreads / $usedThreads),
-      ceil($maxSharedMem / $usedSharedMem), ceil($maxReg / $usedReg));
-    my $activeWarps = $usedThreads / $warpSize;
+    my $activeBlock = min(ceil($maxThreads / $usedThreads),
+      ceil($maxSharedMem / $usedSharedMem), ceil(ceil($maxReg / $usedReg) / $usedThreads));
+    $activeWarp = $activeBlock * ceil($usedThreads / $warpSize);
 
-    return ($activeBlocks, $activeWarps);
+    print "Active Blocks: ", $activeBlock, "\n";
+    print "Active Warps: ", $activeWarp, "\n";
 }
 
 sub LongestPath
@@ -71,11 +74,10 @@ sub LongestPath
     my ($instructs) = @_;
 
     # calculate longest path
-    my %path;
+    my @path;
     foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs->[$i];
-        $path{$instruct} = 0;
+        push @path, 0;
     }
 
     foreach my $i (0 .. $#$instructs)
@@ -84,15 +86,14 @@ sub LongestPath
         foreach my $child (@{$instruct->{children}}) {
             my $ins = @$child[0];
             my $weight = @$child[1];
-            $path{$ins} = $weight + $path{$instruct} if $weight + $path{$instruct} > $path{$ins};
+            $path[$ins] = $weight + $path[$i] if $weight + $path[$i] > $path[$ins];
         }
     }
 
     my $longestPath = 0;
     foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs->[$i];
-        $longestPath = $path{$instruct} if $path{$instruct} > $longestPath;
+        $longestPath = $path[$i] if $path[$i] > $longestPath;
     }
 
     return $longestPath;
@@ -247,62 +248,11 @@ sub AnalyzeDAG
 
     foreach my $i (0 .. $#$instructs)
     {
+        next unless $i != 0;
+
         #skip control instructions
         my $instruct = $instructs->[$i];
         my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
-
-        # efficiency dependencies
-        if ($i > 0)
-        {
-            my $parent = $instructs->[$i - 1];
-            my $effParent = $effInstructs->[$i - 1];
-            if ($parent->{dualCnt} == 1) # parent dual
-            {
-                if ($instruct->{dualCnt} == 0) # links to parent and grandparent
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $effInstructs->[$i - 2];
-                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                }
-                else # not recommend issue pattern, TODO(keren): cannot dual in this way?
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $effInstructs->[$i - 2];
-                    if ($grandparent->{dualCnt} == 0)
-                    { # links to grandparent and parent
-                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    }
-                    else
-                    { # links to parent becuase it is illegal
-                        push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    }
-                }
-            }
-            elsif ($parent->{dualCnt} == 0) # parent single
-            {
-                if ($instruct->{dualCnt} == 0) # links to parent
-                {
-                    push @{$parent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    push @{$effParent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                }
-                else # links to grandparent
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $instructs->[$i - 2];
-                    push @{$grandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                    push @{$effGrandparent->{children}}, [$instruct, 1 / $instruct->{efficiency}];
-                }
-            }
-        }
-
-        next unless $i != 0;
 
         # write dependencies
         my $match = 0;
@@ -376,7 +326,7 @@ sub AnalyzeDAG
                     my $find = 0;
                     foreach my $child (@{$parent->{children}})
                     {
-                        my $ins = @$child[0];
+                        my $ins = $instructs->{@$child[0]};
                         my $weight = @$child[1];
                         if ($ins eq $instruct)
                         {
@@ -388,7 +338,7 @@ sub AnalyzeDAG
                     # parent and child does not has efficiency dependency
                     if ($find == 0)
                     {
-                         push @{$parent->{children}}, [$instruct, $latency - $regLatency];
+                         push @{$parent->{children}}, [$i, $latency - $regLatency];
                     }
                     $instruct->{parents}++;
 
@@ -400,35 +350,86 @@ sub AnalyzeDAG
             # For a dest reg, push it onto the write stack
             unshift @{$deps{$_}}, $instruct foreach @dest;
 
+            # efficiency dependencies
+            my $parent = $instructs->[$i - 1];
+            my $effParent = $effInstructs->[$i - 1];
+            my $instructType = $gram->{type};
+            if ($parent->{dualCnt} == 1) # parent dual
+            {
+                if ($instruct->{dualCnt} == 0) # links to parent and grandparent
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType];
+                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+                else # not recommend issue pattern, TODO(keren): cannot dual in this way?
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    if ($grandparent->{dualCnt} == 0)
+                    { # links to grandparent and parent
+                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                        push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                    }
+                    else
+                    { # links to parent becuase it is illegal
+                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                    }
+                }
+            }
+            elsif ($parent->{dualCnt} == 0) # parent single
+            {
+                if ($instruct->{dualCnt} == 0) # links to parent
+                {
+                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+                else # links to grandparent
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+            }
+
             $match = 1;
             last;
         }
+
         die "Unable to recognize instruction: $instruct->{inst}\n" unless $match;
     }
 }
 
 sub ConstructEfficiencyDAG
 {
-    my ($instructs, $type) = @_;
+    my ($effInstructs, $typeInstructs, $types) = @_;
 
-    foreach my $i (0 .. $#$instructs)
+    foreach my $i (0 .. $#$effInstructs)
     {
-        next unless $i != 0;
+        my $instruct = $effInstructs->[$i];
+        my $typeInstruct = $typeInstructs->[$i];
 
-        my $instruct = $instructs->[$i];
-        my ($op, $inst) = @{$instruct}{qw(op inst)};
-  
-        foreach my $gram (@{$grammar{$op}})
+        foreach my $child (@{$instruct->{children}})
         {
-            my $instructType = $gram->{type};
+            my $instructType = $child->[2];
 
-            if ($instructType->{class} ne $type)
+            my $find = 0;
+            my $weight = 0;
+            foreach my $type (@$types) 
             {
-                foreach my $child (@{$instruct->{children}})
+                if ($instructType eq $type)
                 {
-                    $child->[1] = 0;
+                    $weight = $child->[1];
                 }
             }
+            push @{$typeInstruct->{children}}, [$child->[0], $weight];
         }
     }
 }
@@ -464,7 +465,7 @@ sub CalculateBcomp
             }
         }
     }
-    print "Bcomp: ", $unitsSum > 0 ? $unitsUse / $unitsSum : 0, "\n";
+    print "Bcomp: ", $unitsSum > 0 ? 1.0 - $unitsUse / $unitsSum : 0, "\n";
 }
 
 sub CalculateBmem
@@ -510,8 +511,8 @@ sub CalculateBmem
             }
         }
     }
-    print "Bshared: ", $sharedWidthSum > 0 ? $sharedWidthUse / $sharedWidthSum : 0, "\n";
-    print "Bglobal: ", $globalWidthSum > 0 ? $globalWidthUse / $globalWidthSum : 0, "\n";
+    print "Bshared: ", $sharedWidthSum > 0 ? 1.0 - $sharedWidthUse / $sharedWidthSum : 0, "\n";
+    print "Bglobal: ", $globalWidthSum > 0 ? 1.0 - $globalWidthUse / $globalWidthSum : 0, "\n";
 }
 
 sub CalculateBilp
@@ -520,20 +521,40 @@ sub CalculateBilp
     # TODO(keren): analyze more units
     my ($effInstructs, $cweff) = @_;
 
-    my @x32Instructs = @$effInstructs;
-    my @memInstructs = @$effInstructs;
-    my @x64Instructs = @$effInstructs;
+    my @x32type = ('s2r', 'x32', 'shift', 'cmp', 'vote');
+    my @x64type = ('x64');
+    my @sptype = ('qtr', 'rro');
+    my @memtype = ('mem');
 
-    ConstructEfficiencyDAG(\@x32Instructs, 'x32');
-    ConstructEfficiencyDAG(\@x64Instructs, 'x64');
-    ConstructEfficiencyDAG(\@memInstructs, 'mem');
+    my @x32Instructs;
+    my @x64Instructs;
+    my @spInstructs;
+    my @memInstructs;
 
+    foreach my $i (0 .. $#$effInstructs)
+    {
+        push @x32Instructs, {};
+        push @x64Instructs, {};
+        push @spInstructs, {};
+        push @memInstructs, {};
+    }
+
+    ConstructEfficiencyDAG($effInstructs, \@x32Instructs, \@x32type);
+    ConstructEfficiencyDAG($effInstructs, \@x64Instructs, \@x64type);
+    ConstructEfficiencyDAG($effInstructs, \@spInstructs, \@sptype);
+    ConstructEfficiencyDAG($effInstructs, \@memInstructs, \@memtype);
+    
     my $cx32eff = LongestPath(\@x32Instructs);
     my $cx64eff = LongestPath(\@x64Instructs);
+    my $cspeff = LongestPath(\@spInstructs);
     my $cmemeff = LongestPath(\@memInstructs);
-    my $maxeff = max($cx32eff, $cx64eff, $cmemeff);
+    my $maxeff = max($cx32eff, $cspeff, $cx64eff, $cmemeff);
+    #print "cx32eff: ", $cx32eff, "\n";
+    #print "cx64eff: ", $cx64eff, "\n";
+    #print "csp32eff: ", $cspeff, "\n";
+    #print "cmemeff: ", $cmemeff, "\n";
 
-    print "Bilp: ", $cweff > 0 ? $maxeff / $cweff : 0, "\n";
+    print "Bilp: ", $cweff > 0 ? 1.0 - $maxeff / $cweff : 0, "\n";
 }
 
 # Bpipe
@@ -542,11 +563,10 @@ sub CalculateBpipe
 {
     my ($instructs, $cweff) = @_;
 
-    my %path;
+    my @path;
     foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs->[$i];
-        $path{$instruct} = 0;
+        $path[$i] = 0;
     }
 
     foreach my $i (0 .. $#$instructs)
@@ -554,9 +574,10 @@ sub CalculateBpipe
         my $instruct = $instructs->[$i];
         foreach my $child (@{$instruct->{children}})
         {
-            my $ins = @$child[0];
+            my $iChild= @$child[0];
             my $weight = @$child[1];
-            $path{$ins} = $weight + $path{$instruct} if $weight + $path{$instruct} > $path{$ins};
+            $path[$iChild] = $weight + $path[$i] if $weight + $path[$i] > $path[$iChild];
+            my $ins = $instructs->[$iChild];
             $ins->{prev} = {prevInstruct=>$instruct, prevWeight=>$weight};
         }
     }
@@ -564,8 +585,7 @@ sub CalculateBpipe
     my $longestPath = 0;
     foreach my $i (0 .. $#$instructs)
     {
-        my $instruct = $instructs->[$i];
-        $longestPath = $path{$instruct} if $path{$instruct} > $longestPath;
+        $longestPath = $path[$i] if $path[$i] > $longestPath;
     }
 
     my $longestLatency = 0;
@@ -573,7 +593,7 @@ sub CalculateBpipe
     {
         my $instruct = $instructs->[$i];
         my @latencyPath;
-        if ($path{$instruct} == $longestPath)
+        if ($path[$i] == $longestPath)
         {
             while (defined($instruct->{prev}))
             {
@@ -618,13 +638,18 @@ sub Analyze
         my @instructs = PreprocessBlock($analyzeBlocks[$i]);
 
         # Calculate each instruction's efficiency
-        my @effInstructs = @instructs;
         CalculateEfficiency(\@instructs);
 
         # Analyze DAG dependencies
+        # Init eff instructs
+        my @effInstructs;
+        foreach my $ins (@instructs)
+        {
+            push @effInstructs, {};
+        }
         AnalyzeDAG(\@instructs, \@effInstructs, $regMap);
 
-        ## calculate longest path
+        # calculate longest path
         my $predictedCycle = LongestPath(\@instructs);
         print "predict cycles $predictedCycle\n";
 
@@ -633,7 +658,7 @@ sub Analyze
         CalculateBmem(\@instructs);
         my $cweff = LongestPath(\@effInstructs);
         CalculateBilp(\@effInstructs, $cweff);
-        CalculateBpipe(\@effInstructs, $cweff);
+        CalculateBpipe(\@instructs, $cweff);
     }
 
     print "End analyze\n";

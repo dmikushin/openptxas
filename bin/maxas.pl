@@ -239,6 +239,7 @@ elsif ($mode =~ /^\-?\-a/i) {
         eval "package MaxAs::MaxAs::CODE; our \$$name = '$value';";
     }
     my $analyze     = shift if $ARGV[0] =~ /^\-?\-analyze/i;
+    my $config     = shift or usage();
     my $asmFile   = shift or usage();
     my $asmFile2  = shift;
 
@@ -252,6 +253,8 @@ elsif ($mode =~ /^\-?\-a/i) {
     my ($vol,$dir) = File::Spec->splitpath($asmFile);
     my $include = [$vol, $dir];
 
+    print $fh MaxAs::MaxAs::Occupancy($config);
+    close $fh;
     if ($asmFile2)
     {
         open $fh, ">$asmFile2" or die "$asmFile2: $!";
