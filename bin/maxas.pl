@@ -230,7 +230,8 @@ elsif ($mode =~ /^\-?\-p/i)
     close $fh;
 }
 #Analyzing
-elsif ($mode =~ /^\-?\-a/i) {
+elsif ($mode =~ /^\-?\-a/i) 
+{
     while ($ARGV[0] =~ /^\-?\-D(\w+)/)
     {
         shift;
@@ -241,9 +242,6 @@ elsif ($mode =~ /^\-?\-a/i) {
     my $analyze     = shift if $ARGV[0] =~ /^\-?\-analyze/i;
     my $config     = shift or usage();
     my $asmFile   = shift or usage();
-    my $asmFile2  = shift;
-
-    die "source and destination probably shouldn't be the same file\n" if $asmFile eq $asmFile2;
 
     open my $fh,  $asmFile or die "$asmFile: $!";
     local $/;
@@ -253,18 +251,8 @@ elsif ($mode =~ /^\-?\-a/i) {
     my ($vol,$dir) = File::Spec->splitpath($asmFile);
     my $include = [$vol, $dir];
 
-    print $fh MaxAs::MaxAs::Occupancy($config);
-    close $fh;
-    if ($asmFile2)
-    {
-        open $fh, ">$asmFile2" or die "$asmFile2: $!";
-    }
-    else
-    {
-        $fh = \*STDOUT;
-    }
-    print $fh MaxAs::MaxAs::Analyze($file, $include);
-    close $fh;
+    MaxAs::MaxAs::Occupancy($config);
+    MaxAs::MaxAs::Analyze($file, $include);
 }
 # get version information
 elsif ($mode =~ /^\-?\-v/i)
@@ -278,8 +266,6 @@ else
 }
 
 exit(0);
-
-
 
 sub usage
 {
@@ -311,6 +297,11 @@ Usage:
   performance without any reuse or you can use it to set the flags manually in your sass.
 
     maxas.pl --insert|-i [--noreuse|-n] <asm_file> <cubin_file> [new_cubin_file]
+
+  Analyze each blocks in the assembly codes. Specify each instruction's efficiency, predict a block's
+  running cycles, and point out codes bottlenecks.
+
+    maxas.pl --analyze|-a <config_file> <asm_file> [result_file]
 
   Display version information and exit:
 

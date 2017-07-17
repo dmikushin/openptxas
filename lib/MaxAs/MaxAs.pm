@@ -47,6 +47,8 @@ sub Occupancy
 {
     my ($fileName) = @_;
 
+    print "Occupancy\n";
+
     local $/ = "\n";
     open my $fh, "<", $fileName or die "Cannot open: ", $fileName;
     my $usedThreads = <$fh>;
@@ -66,7 +68,8 @@ sub Occupancy
     $activeWarp = $activeBlock * ceil($usedThreads / $warpSize);
 
     print "Active Blocks: ", $activeBlock, "\n";
-    print "Active Warps: ", $activeWarp, "\n";
+    print "Active Warps: ", $activeWarp, "\n\n\n";
+    close $fh;
 }
 
 sub LongestPath
@@ -143,13 +146,6 @@ sub PreprocessBlock
     # remap labels
     foreach my $i (@branches)
     {
-#        if ($instructs[$i]{inst} !~ m'(\w+);$' || !exists $labels{$1})
-#        {
-#            die "instruction has invalid label: $instructs[$i]{inst}";
-#        }
-#
-#        $instructs[$i]{jump} = $labels{$1};
-#
         if (exists $relOffset{$instructs[$i]{op}})
         {
             $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', (($labels{$1} - $i - 1) * 8) & 0xffffff/e;
@@ -192,8 +188,9 @@ sub CalculateEfficiency
                 $instruct->{nodual} = 1;
             }
 
-            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
-            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            # For pascal and maxwell
+            my $dispatches = 1;
+            print "\t" if $instruct->{dualCnt};
             print $inst, "\t", $dispatches, "\t";
             my $instructType = $gram->{type}; 
             if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' ||
@@ -214,9 +211,9 @@ sub CalculateEfficiency
             elsif ($instructType->{class} eq 'mem')
             {
                 my $units = $instructType->{units};
-                my $memType = $capData->{memType};
-                my $cache = $capData->{memCache};
-                my $issue = $warpSize / $units;
+                my $memType = $capData->{type};
+                my $cache = $capData->{cache};
+                my $issue = 1;
                 # vector instruction
                 if ($memType =~ s/^\.//g)
                 {
@@ -369,9 +366,6 @@ sub AnalyzeDAG
             # Find Read-After-Write dependencies
             foreach my $src (grep { exists $deps{$_} } @src)
             {
-                # Memory operations get delayed access to registers but not to the predicate
-                my $regLatency = $src eq $instruct->{predReg} ? 0 : $instruct->{rlat};
-
                 # the parent should be the most recently added dest op to the stack
                 foreach my $parent (@{$deps{$src}})
                 {
@@ -387,7 +381,7 @@ sub AnalyzeDAG
                         my $weight = $child->[1];
                         if ($ins eq $instruct)
                         {
-                            $child->[1] = $weight if $weight > ($latency - $regLatency);
+                            $child->[1] = $weight > $latency ? $weight : $latency;
                             $find = 1;
                             last;
                         }
@@ -395,7 +389,7 @@ sub AnalyzeDAG
                     # parent and child does not has efficiency dependency
                     if ($find == 0)
                     {
-                         push @{$parent->{children}}, [$i, $latency - $regLatency];
+                         push @{$parent->{children}}, [$i, $latency];
                     }
                     $instruct->{parents}++;
 
@@ -459,12 +453,7 @@ sub CalculateBcomp
         my $match = 0;
         foreach my $gram (@{$grammar{$op}})
         {
-            my $capData = parseInstruct($inst, $gram) or next;
-            @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
-            $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
-
-            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
-            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            my $dispatches = 1;
             my $instructType = $gram->{type}; 
             if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
                 $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
@@ -496,13 +485,10 @@ sub CalculateBmem
         {
             my $capData = parseInstruct($inst, $gram) or next;
             @{$instruct}{@itypes} = @{$gram->{type}}{@itypes};
-            $instruct->{dualCnt} = $instruct->{dual} ? 1 : 0;
-
-            my $dispatches = $activeWarp > $scheduler ? $scheduler : $activeWarp;
-            $dispatches = $instruct->{dualCnt} ? $dispatches * 2 : $dispatches;
+            my $dispatches = 1;
             my $instructType = $gram->{type}; 
             if ($instructType->{class} eq 'mem') {
-                my $memType = $capData->{memType};
+                my $memType = $capData->{type};
                 # default 32 bit
                 my $insWidth = 4;
                 # vector instruction
@@ -510,10 +496,10 @@ sub CalculateBmem
                     $insWidth = $memType / 8;
                 }
                 if ($instructType->{type} eq 'global') {
-                    $globalWidthSum = $globalWidthSum + 16 * $warpSize; # LDG.512
+                    $globalWidthSum = $globalWidthSum + 16 * $warpSize / ($warpSize / $instructType->{units}); # LDG.128
                     $globalWidthUse = $globalWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
                 } else { #shared 
-                    $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize;
+                    $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize / ($warpSize / $instructType->{units});
                     $sharedWidthUse = $sharedWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
                 }
             }
@@ -582,11 +568,14 @@ sub CalculateBpipe
         my $instruct = $instructs->[$i];
         foreach my $child (@{$instruct->{children}})
         {
-            my $iChild= @$child[0];
-            my $weight = @$child[1];
-            $path[$iChild] = $weight + $path[$i] if $weight + $path[$i] > $path[$iChild];
-            my $ins = $instructs->[$iChild];
-            $ins->{prev} = {prevInstruct=>$instruct, prevWeight=>$weight};
+            my $iChild= $child->[0];
+            my $weight = $child->[1];
+            if ($weight + $path[$i] > $path[$iChild])
+            {
+                $path[$iChild] = $weight + $path[$i];
+                my $ins = $instructs->[$iChild];
+                $ins->{prev} = {prevInstruct=>$instruct, prevWeight=>$weight};
+            }
         }
     }
 
@@ -600,23 +589,19 @@ sub CalculateBpipe
     foreach my $i (0 .. $#$instructs) 
     {
         my $instruct = $instructs->[$i];
-        my @latencyPath;
+        my $latencies = 0;
         if ($path[$i] == $longestPath)
         {
             while (defined($instruct->{prev}))
             {
-                push @latencyPath, {to=>$instruct, from=>$instruct->{prev}};
-                $instruct = $instruct->{prev};
-            }
-        }
-        my $latencies = 0;
-        foreach my $ins (@latencyPath)
-        {
-            my $from = $ins->{from};
-            my $weight = $from->{prevWeight};
-            if ($weight == $from->{lat})
-            {
-                $latencies = $latencies + $weight; 
+                my $prevIns = $instruct->{prev}->{prevInstruct};
+                my $prevWeight = $instruct->{prev}->{prevWeight};
+                my $prevLat = $prevIns->{lat};
+                if ($prevLat == $prevWeight) 
+                {
+                    $latencies = $latencies + $prevWeight;
+                }
+                $instruct = $prevIns;
             }
         }
         $longestLatency = $latencies if $latencies > $longestLatency;
@@ -642,6 +627,8 @@ sub Analyze
     # Iterate over analyz blocks
     foreach my $i (0 .. $#analyzeBlocks)
     {
+        print "Analyze block $i\n\n";
+
         # Preprocess instructs
         my @instructs = PreprocessBlock($analyzeBlocks[$i]);
 
@@ -667,6 +654,8 @@ sub Analyze
         my $cweff = LongestPath(\@effInstructs);
         CalculateBilp(\@effInstructs, $cweff);
         CalculateBpipe(\@instructs, $cweff);
+
+        print "\n\n";
     }
 
     print "End analyze\n";
