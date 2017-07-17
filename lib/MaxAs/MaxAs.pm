@@ -143,13 +143,13 @@ sub PreprocessBlock
     # remap labels
     foreach my $i (@branches)
     {
-        if ($instructs[$i]{inst} !~ m'(\w+);$' || !exists $labels{$1})
-        {
-            die "instruction has invalid label: $instructs[$i]{inst}";
-        }
-
-        $instructs[$i]{jump} = $labels{$1};
-
+#        if ($instructs[$i]{inst} !~ m'(\w+);$' || !exists $labels{$1})
+#        {
+#            die "instruction has invalid label: $instructs[$i]{inst}";
+#        }
+#
+#        $instructs[$i]{jump} = $labels{$1};
+#
         if (exists $relOffset{$instructs[$i]{op}})
         {
             $instructs[$i]{inst} =~ s/(\w+);$/sprintf '0x%06x;', (($labels{$1} - $i - 1) * 8) & 0xffffff/e;
@@ -246,6 +246,63 @@ sub AnalyzeDAG
     my $vectors = $regMap->{__vectors};
     my %deps;
 
+    # efficiency dependencies
+    foreach my $i (0 .. $#$instructs)
+    {
+        next unless $i != 0;
+        my $instruct = $instructs->[$i];
+        foreach my $gram (@{$grammar{$instruct->{op}}})
+        {
+            my $parent = $instructs->[$i - 1];
+            my $effParent = $effInstructs->[$i - 1];
+            my $instructType = $gram->{type};
+            if ($parent->{dualCnt} == 1) # parent dual
+            {
+                if ($instruct->{dualCnt} == 0) # links to parent and grandparent
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType];
+                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+                else # not recommend issue pattern, TODO(keren): cannot dual in this way?
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    if ($grandparent->{dualCnt} == 0)
+                    { # links to grandparent and parent
+                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                        push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                    }
+                    else
+                    { # links to parent becuase it is illegal
+                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                    }
+                }
+            }
+            elsif ($parent->{dualCnt} == 0) # parent single
+            {
+                if ($instruct->{dualCnt} == 0) # links to parent
+                {
+                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+                else # links to grandparent
+                {
+                    my $grandparent = $instructs->[$i - 2];
+                    my $effGrandparent = $effInstructs->[$i - 2];
+                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
+                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
+                }
+            }
+        }
+    }
+
     foreach my $i (0 .. $#$instructs)
     {
         next unless $i != 0;
@@ -326,11 +383,11 @@ sub AnalyzeDAG
                     my $find = 0;
                     foreach my $child (@{$parent->{children}})
                     {
-                        my $ins = $instructs->{@$child[0]};
-                        my $weight = @$child[1];
+                        my $ins = $instructs->[$child->[0]];
+                        my $weight = $child->[1];
                         if ($ins eq $instruct)
                         {
-                            @$child[1] = $weight if $weight > ($latency - $regLatency);
+                            $child->[1] = $weight if $weight > ($latency - $regLatency);
                             $find = 1;
                             last;
                         }
@@ -349,55 +406,6 @@ sub AnalyzeDAG
 
             # For a dest reg, push it onto the write stack
             unshift @{$deps{$_}}, $instruct foreach @dest;
-
-            # efficiency dependencies
-            my $parent = $instructs->[$i - 1];
-            my $effParent = $effInstructs->[$i - 1];
-            my $instructType = $gram->{type};
-            if ($parent->{dualCnt} == 1) # parent dual
-            {
-                if ($instruct->{dualCnt} == 0) # links to parent and grandparent
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $effInstructs->[$i - 2];
-                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType];
-                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                }
-                else # not recommend issue pattern, TODO(keren): cannot dual in this way?
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $effInstructs->[$i - 2];
-                    if ($grandparent->{dualCnt} == 0)
-                    { # links to grandparent and parent
-                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                        push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                        push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                    }
-                    else
-                    { # links to parent becuase it is illegal
-                        push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                        push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                    }
-                }
-            }
-            elsif ($parent->{dualCnt} == 0) # parent single
-            {
-                if ($instruct->{dualCnt} == 0) # links to parent
-                {
-                    push @{$parent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                    push @{$effParent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                }
-                else # links to grandparent
-                {
-                    my $grandparent = $instructs->[$i - 2];
-                    my $effGrandparent = $effInstructs->[$i - 2];
-                    push @{$grandparent->{children}}, [$i, 1 / $instruct->{efficiency}];
-                    push @{$effGrandparent->{children}}, [$i, 1 / $instruct->{efficiency}, $instructType->{class}];
-                }
-            }
 
             $match = 1;
             last;
