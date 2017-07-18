@@ -190,8 +190,6 @@ sub CalculateEfficiency
 
             # For pascal and maxwell
             my $dispatches = 1;
-            print "\t" if $instruct->{dualCnt};
-            print $inst, "\t", $dispatches, "\t";
             my $instructType = $gram->{type}; 
             if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' ||
                 $instructType->{class} eq 'qtr' || $instructType->{class} eq 'rro' ||
@@ -199,20 +197,17 @@ sub CalculateEfficiency
             {
                 my $units = $instructType->{units};
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units);
-                print $instruct->{efficiency}, "\t0\t0";
             }
             elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp')
             {
                 my $units = $instructType->{units};
                 my $tput = $instructType->{tput};
                 $instruct->{efficiency} = 1 / (ceil(($dispatches * $warpSize) / $units) * $tput);
-                print "0\t", $instruct->{efficiency}, "\t0";
             }
             elsif ($instructType->{class} eq 'mem')
             {
                 my $units = $instructType->{units};
                 my $memType = $capData->{type};
-                my $cache = $capData->{cache};
                 my $issue = 1;
                 # vector instruction
                 if ($memType =~ s/^\.//g)
@@ -220,11 +215,56 @@ sub CalculateEfficiency
                     $issue *= $memType / $warpSize;
                 }
                 # TODO(keren): cache instruction ???
-                if (defined $cache)
+                if ($op eq 'LDG')
                 {
                     $issue = 1;
                 }
                 $instruct->{efficiency} = 1 / ceil(($dispatches * $warpSize) / $units * $issue);
+            }
+            else
+            {
+                die "No such instruct type: ", Dumper($instruct);
+            }
+            if ($i > 1 and $instruct->{dual}) {
+                my ($prevOp) = @{$instructs->[$i - 1]}{qw(op)};
+                foreach my $prevGram (@{$grammar{$prevOp}})
+                {
+                    #TODO(keren): not noly same class, but also same units
+                    if ($prevGram->{type}->{class} eq $instructType->{class}) 
+                    {
+                        #TODO(keren): ceil?
+                        $instructs->[$i - 1]->{efficiency} = $instruct->{efficiency} =
+                          1 / 2 * $instruct->{efficiency};
+                    }
+                }
+            }
+        }
+    }
+    foreach my $i (0 .. $#$instructs) 
+    {
+        next unless $i > 0;
+
+        my $instruct = $instructs->[$i];
+        my ($op, $inst) = @{$instructs->[$i]}{qw(op inst)};
+  
+        foreach my $gram (@{$grammar{$op}})
+        {
+            my $dispatches = 1;
+            print "\t" if $instruct->{dualCnt};
+            print $inst, "\t", $dispatches, "\t";
+            my $instructType = $gram->{type}; 
+            if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' ||
+                $instructType->{class} eq 'qtr' || $instructType->{class} eq 'rro' ||
+                $instructType->{class} eq 'vote')
+            {
+                print $instruct->{efficiency}, "\t0\t0";
+            }
+            elsif ($instructType->{class} eq 'shift' || $instructType->{class} eq 'cmp')
+            {
+                print "0\t", $instruct->{efficiency}, "\t0";
+            }
+            elsif ($instructType->{class} eq 'mem')
+            {
                 # TODO(keren): simulate
                 print "0\t0\t", $instruct->{efficiency};
             }
@@ -458,7 +498,7 @@ sub CalculateBcomp
             if ($instructType->{class} eq 'x32' || $instructType->{class} eq 's2r' || $instructType->{class} eq 'qtr' ||
                 $instructType->{class} eq 'rro' || $instructType->{class} eq 'vote') {
                 $unitsSum = $unitsSum +  $instructType->{units};
-                $unitsUse = $unitsUse + $instruct->{efficiency} * $dispatches * $warpSize  
+                $unitsUse = $unitsUse + $dispatches * $warpSize  
             }
         }
     }
@@ -496,11 +536,16 @@ sub CalculateBmem
                     $insWidth = $memType / 8;
                 }
                 if ($instructType->{type} eq 'global') {
-                    $globalWidthSum = $globalWidthSum + 16 * $warpSize / ($warpSize / $instructType->{units}); # LDG.128
-                    $globalWidthUse = $globalWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
+                    $globalWidthSum = $globalWidthSum + 16 * $warpSize; # LDG.128
+                    #TODO cache 
+                    if ($op eq 'LDG') {
+                        $globalWidthUse = $globalWidthUse + $insWidth * $warpSize;
+                    } else {
+                        $globalWidthUse = $globalWidthUse + ($insWidth / ceil($insWidth / 4)) * $warpSize;
+                    }
                 } else { #shared 
-                    $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize / ($warpSize / $instructType->{units});
-                    $sharedWidthUse = $sharedWidthUse + $instruct->{efficiency} * $insWidth * $warpSize;
+                    $sharedWidthSum = $sharedWidthSum + $bankWidth * $warpSize;
+                    $sharedWidthUse = $sharedWidthUse + ($insWidth / ceil($insWidth / $bankWidth)) * $warpSize;
                 }
             }
         }
