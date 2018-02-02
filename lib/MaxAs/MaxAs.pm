@@ -676,15 +676,46 @@ sub Extract
     my %labels;
     my $labelnum = 1;
 
+    # Eat up header
+    my $line_count = 0;
+    while(my $line = <$in>)
+    {
+        if ($line =~ /\.headerflags/)
+        {
+            print STDERR "Ate $line_count lines up to and including: $line\n";
+            last;
+        } else
+        {
+            $line_count += 1;
+        }
+    }
+
     my @data;
+    my $early_line = "";
     FILE: while (my $line = <$in>)
     {
+        $line =~ s/{/ /;
+        $line =~ s/}/ /;
         my (@ctrl, @ruse);
-        next unless processSassCtrlLine($line, \@ctrl, \@ruse);
+        if (! processSassCtrlLine($line, \@ctrl, \@ruse)) {
+            # Did not get a Ctrl line where we expected it.  This is
+            # due to double instruction issue syntax.
+            $early_line = $line;
+            print STDERR "Bad Ctrl line! $early_line";
+            next;
+        }
 
         CTRL: foreach my $ctrl (@ctrl)
         {
-            $line = <$in>;
+            if ($early_line ne "") {
+                print STDERR "Found an early line! $early_line";
+                $line = $early_line;
+                $early_line = "";
+            } else {
+                $line = <$in>;
+                $line =~ s/{/ /;
+                $line =~ s/}/ /;
+            }
 
             my $inst = processSassLine($line) or next CTRL;
 
