@@ -770,9 +770,10 @@ sub Extract
             next;
         }
 
-        CTRL: foreach my $ctrl (@ctrl)
+        CTRL: foreach my $ctrl_index (0 .. $#ctrl)
         {
             $i++;
+            my $ctrl = $ctrl[$ctrl_index];
             if ($early_line ne "") {
                 print STDERR "Found an early line! $early_line";
                 $line = $early_line;
@@ -786,7 +787,7 @@ sub Extract
             # skip superfluous (?) braces in cuobjdump output
             $line =~ s/{//g;
             $line =~ s/}//g;
-            my $inst = processSassLine($line) or next CTRL;
+            my $inst = processSassLine($line, $ctrl_index) or next CTRL;
 
             # Convert branch/jump/call addresses to labels
             if (exists($jumpOp{$inst->{op}}) && $inst->{ins} =~ m'(0x[0-9a-f]+)')
@@ -818,6 +819,10 @@ sub Extract
     foreach my $inst (@data)
     {
         print $out "$labels{$inst->{num}}:\n" if exists $labels{$inst->{num}};
+        if (exists $labels{$inst->{num} - 0x8} && $inst->{ctrl_index} == 0) {
+            print $out "@{[$labels{$inst->{num} - 0x8}]}:\n";
+            printf STDERR "Found label to control code %s(0x%X)\n", $labels{$inst->{num} - 0x8}, $inst->{num} - 0x8;
+        }
         printf $out "%s %5s%s\n", @{$inst}{qw(ctrl pred ins)};
     }
 }
